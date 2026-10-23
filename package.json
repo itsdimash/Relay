@@ -1,0 +1,14 @@
+{
+  "name": "relay-agent-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Claude Code and Codex collaboration workspace",
+  "scripts": {
+    "dev": "python3 dev.py",
+    "start": "python3 server.py --open",
+    "test": "python3 -m unittest discover -s tests -v"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
