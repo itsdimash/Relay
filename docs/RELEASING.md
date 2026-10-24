@@ -12,7 +12,7 @@ scripts/build_macos_app.sh
 open dist/Relay.app
 ```
 
-This creates an ad-hoc-signed build. It is suitable for local testing, but other Macs will show a Gatekeeper warning.
+This creates an ad-hoc-signed build. It is suitable for local testing, but other Macs will show a Gatekeeper warning. On macOS 15 and later, people open it once through **System Settings → Privacy & Security → Open Anyway**; Control-click → Open only works on macOS 14 and earlier.
 
 ## Configure trusted public downloads
 
@@ -40,3 +40,7 @@ git push origin v0.1.0
 ```
 
 The `macOS release` workflow tests the project, builds and signs the app, submits it to Apple's notarization service when credentials are configured, staples the approval ticket, and publishes the ZIP. `workflow_dispatch` can be used to produce a downloadable test artifact without creating a GitHub Release.
+
+Each release also attaches `Relay-macOS-arm64.zip.sha256`. Without the Apple secrets above, the workflow still publishes an ad-hoc-signed build and says in the release notes that it is not notarized.
+
+Once a release exists, the stable download link is `https://github.com/itsdimash/Relay/releases/latest/download/Relay-macOS-arm64.zip`.
