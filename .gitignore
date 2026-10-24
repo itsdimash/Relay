@@ -9,3 +9,8 @@ __pycache__/
 
 node_modules/
 npm-debug.log*
+
+# Packaging output. Publish the zip as a GitHub Release instead of committing it.
+.venv-packaging/
+build/
+dist/Relay.app/

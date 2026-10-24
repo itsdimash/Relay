@@ -1,0 +1,96 @@
+name: macOS release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      # Secrets cannot be tested directly in `if:`, so expose whether they exist.
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "Relay CI"
+          python3 -m unittest discover -s tests -v
+
+      - name: Set up packaging tools
+        run: scripts/setup_macos_packaging.sh
+
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/relay-build.keychain-db"
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+      - name: Build Relay.app
+        env:
+          CODESIGN_IDENTITY: ${{ env.HAS_SIGNING == 'true' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
+        run: scripts/build_macos_app.sh
+
+      - name: Notarize and staple
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARIZATION == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit dist/Relay-macOS-arm64.zip \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple dist/Relay.app
+          spctl --assess --type execute --verbose dist/Relay.app
+          # Re-zip so the download contains the stapled ticket.
+          rm dist/Relay-macOS-arm64.zip
+          ditto -c -k --sequesterRsrc --keepParent dist/Relay.app dist/Relay-macOS-arm64.zip
+
+      - name: Checksum
+        run: |
+          cd dist
+          shasum -a 256 Relay-macOS-arm64.zip | tee Relay-macOS-arm64.zip.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Relay-macOS-arm64
+          path: |
+            dist/Relay-macOS-arm64.zip
+            dist/Relay-macOS-arm64.zip.sha256
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Relay-macOS-arm64.zip
+            dist/Relay-macOS-arm64.zip.sha256
+          generate_release_notes: true
+          body: |
+            **Relay for Apple silicon Macs (macOS 13 or newer).**
+            ${{ env.HAS_NOTARIZATION == 'true' && 'Signed and notarized by Apple.' || 'This build is not notarized yet. On first launch, open System Settings → Privacy & Security and click Open Anyway.' }}

@@ -1,125 +1,90 @@
 <div align="center">
-  <img src="static/relay.svg" width="52" alt="Relay logo">
+  <img src="static/relay.svg" width="72" alt="Relay logo">
   <h1>Relay</h1>
   <p><strong>Your agents. One shared workflow. You approve the changes.</strong></p>
-  <p>A local workspace for Claude Code and Codex to inspect, plan, build, and review software together.</p>
+  <p>A local macOS workspace where Claude Code and Codex inspect, plan, build, and review software together.</p>
+
+  <p>
+    <a href="#install-the-macos-app"><strong>Download</strong></a> ·
+    <a href="#how-it-works">How it works</a> ·
+    <a href="#your-first-task">First task</a> ·
+    <a href="#privacy-and-security">Privacy</a> ·
+    <a href="#troubleshooting">Troubleshooting</a>
+  </p>
+
+  <p>
+    <img alt="Platform: macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-225b4d">
+    <img alt="Apple silicon" src="https://img.shields.io/badge/Apple%20silicon-arm64-225b4d">
+    <img alt="Status: early prototype" src="https://img.shields.io/badge/status-early%20prototype-lightgrey">
+    <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20local-225b4d">
+  </p>
 </div>
 
-Relay is a native macOS workspace for coordinating your installed coding agents. Give them a task, choose their responsibilities, approve the proposed plan, and follow the implementation and review handoffs in one desktop window.
+Relay coordinates the coding agents you already have installed. Give it a task, choose which agent does which job, approve the plan, and follow the build and review handoffs in one window.
 
-Use it for frontend work, backend changes, project observations, or implementation planning. Relay runs on your computer and uses your existing command-line tool sign-ins.
+- **Local.** Relay runs on your Mac and uses your existing Claude Code and Codex sign-ins. No Relay account, no Relay API key.
+- **Approval first.** Nothing is edited until you approve the plan.
+- **Your choice of team.** Put Claude Code or Codex in any role, pick models and effort, and save presets.
 
 > **Early prototype · macOS first.** Automated tests and scripted browser checks cover the coordinator and its interfaces. A real Claude observation has been verified; a complete live multi-provider build/review cycle and live image understanding have not yet been verified in the development environment.
 
-## What you can do
+## Contents
 
-- **Inspect without editing.** Get an observation or a plan from the current files, including uncommitted changes.
-- **Choose your team.** Assign Claude Code or Codex to each role, select models and effort, add instructions, and save presets.
-- **Clarify before approving.** The Observer asks focused questions when key requirements are missing. Your answers refine the plan and never authorize edits.
-- **Approve before building.** Review the proposed plan, risks, and verification checks before the Builder starts.
-- **Bring visual context.** Pick, drop, or paste screenshots and reference images into tasks and follow-ups.
-- **Continue the conversation.** Ask read-only follow-up questions in the same saved chat.
-- **Act on findings.** Select issues and turn them into an editable planning or implementation brief with evidence attached.
-- **Review the result.** Read an overview, priority labels, next actions, file-by-file diffs, new-file previews, and Builder-reported checks.
-- **Recover saved work.** Retry a failed step or explicitly continue interrupted work in the same working copy, preserving completed results and approval records.
-- **Keep local history.** Search chats, reopen reports, or move conversations to recoverable local Trash.
+- [Install the macOS app](#install-the-macos-app)
+- [How it works](#how-it-works)
+- [What you can do](#what-you-can-do)
+- [Your first task](#your-first-task)
+- [Task modes](#task-modes)
+- [Working with Relay](#working-with-relay) (clarification, approval, teams, images, reports, reviewing changes, recovery, controls)
+- [Privacy and security](#privacy-and-security)
+- [Run from source](#run-from-source)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Current limits](#current-limits-and-next-steps)
+- [License](#license)
 
-The dashboard opens with no conversation selected. Saved chats stay in the sidebar until you choose one.
+## Install the macOS app
 
-## Requirements
+**You need:** an Apple silicon Mac on macOS 13 or newer, plus [Claude Code](https://code.claude.com), Codex CLI, or both, installed and signed in. [Git](https://git-scm.com) is required for build tasks.
 
-| Requirement | Details |
-| --- | --- |
-| Python | Python 3.10 or newer |
-| Git | Required for build tasks and the repository-based test suite |
-| Agent tools | Claude Code, Codex CLI, or both, installed and signed in for the roles you choose |
-| Operating system | macOS is the primary environment. The backend requires POSIX process groups and file locking; Linux is not yet validated and Windows is unsupported. |
-| Optional development tools | Node.js 18+ and npm for the convenience scripts and frontend checks |
+1. **Download** [`Relay-macOS-arm64.zip`](https://github.com/itsdimash/Relay/raw/main/dist/Relay-macOS-arm64.zip) (about 8 MB).
+2. **Unzip it** and drag **Relay.app** into your **Applications** folder.
+3. **Open it the first time through System Settings.** Relay is not yet signed with an Apple Developer ID or notarized, so macOS blocks the first launch.
+   - Double-click **Relay**. When macOS warns about it, click **Done** (do not move it to the Trash).
+   - Open **System Settings → Privacy & Security** and scroll to the bottom.
+   - Next to the message that Relay was blocked, click **Open Anyway**, then confirm.
+   - On macOS 14 and earlier you can instead Control-click Relay, choose **Open**, and confirm.
 
-The backend uses Python's standard library. **No `pip install` or `npm install` is required.**
+   You only need to do this once.
+4. **Sign in to your agents** in Terminal, skipping any you will not use:
 
-The default team uses Claude as Observer and Reviewer, and Codex as Builder. You can assign the same provider to all three roles. Only the providers needed by the selected task mode must be ready.
+   ```sh
+   claude auth login
+   codex login
+   ```
 
-## Quick start
+Relay opens as a native window with its own project picker, task composer, conversation history, plan approval, clarification, and handoff controls. It does not open or embed a website.
 
-### Download the macOS app
+History and settings for the packaged app live in `~/Library/Application Support/Relay`.
 
-Download `Relay-macOS-arm64.zip` from the repository's GitHub Releases page, unzip it, and move **Relay.app** to Applications. Relay opens as a native macOS workspace with its own window, project picker, task composer, conversation history, plan approval, clarification, and handoff controls. It does not open or embed a website.
-
-The current packaged build is for Apple silicon Macs. Until a release is signed and notarized with an Apple Developer ID, macOS may require you to Control-click Relay and choose **Open** the first time.
-
-Relay keeps packaged-app history and settings in `~/Library/Application Support/Relay`. It continues to use your existing Claude Code and Codex installations and sign-ins.
-
-### Run from source
-
-Download or clone this repository, then open a terminal **inside the Relay folder**.
-
-Sign in to the tools you will use:
-
-```sh
-claude auth login
-codex login
-```
-
-Skip the command for any provider you have not installed or do not plan to use. Start Relay:
-
-```sh
-python3 server.py --open
-```
-
-The dashboard opens at [http://127.0.0.1:8765](http://127.0.0.1:8765). Keep the terminal running; press **Control+C** to stop the server. On macOS, you can also double-click `Start.command`.
-
-If you use npm, `npm start` launches the same normal server.
+> The download link always serves the latest build on the `main` branch. Prefer to build the app yourself? See [Releasing Relay](docs/RELEASING.md).
 
 ### Connect your own accounts
 
 Relay uses the authentication already configured in your installed CLIs. It does not provide shared accounts, ask you to upload credentials, or require a separate Relay API key. Model access, provider configuration, billing, and usage limits remain those of your tools and accounts.
 
-In the dashboard, open **Agent connections** to check installation and sign-in status. A successful connection check does not guarantee a model request will succeed. Relay has no combined spending or token cap.
+Open **Agent connections** in Relay to check installation and sign-in status. A successful connection check does not guarantee a model request will succeed, and Relay has no combined spending or token cap.
 
-If an executable is not found, set its path before starting Relay:
+If Relay cannot find an executable, set its path before launching from Terminal:
 
 ```sh
 export RELAY_CLAUDE="/absolute/path/to/claude"
 export RELAY_CODEX="/absolute/path/to/codex"
-python3 server.py --open
 ```
 
-Relay also checks known macOS installation locations. For another port:
+Relay also checks the usual macOS installation locations.
 
-```sh
-python3 server.py --port 8766 --open
-```
-
-Only one server may use a Relay data folder at a time, even if the ports differ.
-
-## Choose a task mode
-
-| Mode | What runs | Editing | Project requirement |
-| --- | --- | --- | --- |
-| **Observe only** | Observer inspects and reports current behavior, risks, and findings | Disabled | Any existing folder |
-| **Plan only** | Observer proposes steps, affected files, risks, and verification criteria | Disabled | Any existing folder |
-| **Build & review** | Observer → clarification if needed → your approval → Builder → Reviewer → fix/review rounds as needed | Builder only, after approval | Clean Git repository with at least one commit, selected at its root |
-
-Read-only modes inspect your selected folder directly. They can see staged, unstaged, and untracked files without requiring a commit or stash. They do not treat those existing edits as changes made by an agent.
-
-Build tasks create a separate detached Git worktree from committed `HEAD`. Your original checkout's source files stay unchanged. Untracked and ignored files, local dependencies, and uncommitted edits are not copied; submodules are not initialized automatically.
-
-## Start your first task
-
-1. Choose **Add project**, give it a name, select its folder, and save it.
-2. Select the project and task mode.
-3. Describe the desired result and any acceptance criteria. Attach visual references if useful.
-4. Open **Configure team** to choose tools, models, effort, and role instructions.
-5. Set the time limit and, for builds, the review-round limit. Start the task.
-6. For **Build & review**, inspect the proposed plan and approve or reject it.
-7. Read the final report and review any file changes before keeping them.
-
-**Remove** in the project selector forgets the saved entry; it does not delete the folder.
-
-**Watch an example** runs a clearly labeled simulation. It does not call agents, spend model usage, or change a project.
-
-## How collaboration works
+## How it works
 
 ```mermaid
 flowchart LR
@@ -140,7 +105,53 @@ flowchart LR
 | **Reviewer** | Inspect the actual result against the task and acceptance checks; approve it or request evidence-backed fixes. |
 | **You** | Define the task, approve the plan, inspect the result, and decide whether to keep it. |
 
-### Clarify missing details
+The default team uses Claude as Observer and Reviewer, and Codex as Builder. You can assign the same provider to all three roles, and only the providers needed by the selected task mode must be ready.
+
+## What you can do
+
+- **Inspect without editing.** Get an observation or a plan from the current files, including uncommitted changes.
+- **Choose your team.** Assign Claude Code or Codex to each role, select models and effort, add instructions, and save presets.
+- **Clarify before approving.** The Observer asks focused questions when key requirements are missing. Your answers refine the plan and never authorize edits.
+- **Approve before building.** Review the proposed plan, risks, and verification checks before the Builder starts.
+- **Bring visual context.** Pick, drop, or paste screenshots and reference images into tasks and follow-ups.
+- **Continue the conversation.** Ask read-only follow-up questions in the same saved chat.
+- **Act on findings.** Select issues and turn them into an editable planning or implementation brief with evidence attached.
+- **Review the result.** Read an overview, priority labels, next actions, file-by-file diffs, new-file previews, and Builder-reported checks.
+- **Recover saved work.** Retry a failed step or explicitly continue interrupted work in the same working copy, preserving completed results and approval records.
+- **Keep local history.** Search chats, reopen reports, or move conversations to recoverable local Trash.
+
+Relay opens with no conversation selected. Saved chats stay in the sidebar until you choose one.
+
+## Your first task
+
+1. Choose **Add project**, give it a name, select its folder, and save it.
+2. Select the project and a [task mode](#task-modes).
+3. Describe the desired result and any acceptance criteria. Attach visual references if useful.
+4. Open **Configure team** to choose tools, models, effort, and role instructions.
+5. Set the time limit and, for builds, the review-round limit. Start the task.
+6. For **Build & review**, inspect the proposed plan and approve or reject it.
+7. Read the final report and review any file changes before keeping them.
+
+**Remove** in the project selector forgets the saved entry; it does not delete the folder.
+
+**Watch an example** runs a clearly labeled simulation. It does not call agents, spend model usage, or change a project.
+
+## Task modes
+
+| Mode | What runs | Editing | Project requirement |
+| --- | --- | --- | --- |
+| **Observe only** | Observer inspects and reports current behavior, risks, and findings | Disabled | Any existing folder |
+| **Plan only** | Observer proposes steps, affected files, risks, and verification criteria | Disabled | Any existing folder |
+| **Build & review** | Observer → clarification if needed → your approval → Builder → Reviewer → fix/review rounds as needed | Builder only, after approval | Clean Git repository with at least one commit, selected at its root |
+
+Read-only modes inspect your selected folder directly. They can see staged, unstaged, and untracked files without requiring a commit or stash, and they do not treat those existing edits as changes made by an agent.
+
+Build tasks create a separate detached Git worktree from committed `HEAD`, so your original checkout's source files stay unchanged. Untracked and ignored files, local dependencies, and uncommitted edits are not copied; submodules are not initialized automatically.
+
+## Working with Relay
+
+<details>
+<summary><strong>Clarify missing details</strong></summary>
 
 For **Plan only** and **Build & review**, the Observer can ask up to five focused questions at a time when important requirements are unclear. Clear tasks go straight to a plan. Questions appear in **A few details before the plan**, with optional suggested answers and a text field for your own answer.
 
@@ -148,25 +159,34 @@ Answer every question and choose **Send answers & update plan**. Relay sends the
 
 **Sending answers never approves edits.** A build still stops at **Awaiting your approval** with the final revised plan. Plan-only tasks finish with a read-only report. Observe-only tasks and report follow-ups keep their existing read-only report behavior.
 
-Questions and submitted answers stay in the chat under **Your clarification answers**, are preserved in follow-ups, and are included in the Builder and Reviewer handoffs. Unsent text is saved in this browser tab's session storage, so you can reload and reopen the waiting chat. A server restart interrupts the task; it does not resume questions or approve work automatically.
+Questions and submitted answers stay in the chat under **Your clarification answers**, are preserved in follow-ups, and are included in the Builder and Reviewer handoffs. Unsent text is saved in the browser tab's session storage, so you can reload and reopen the waiting chat. A server restart interrupts the task; it does not resume questions or approve work automatically.
 
-### Approval before editing
+</details>
+
+<details>
+<summary><strong>Approval before editing</strong></summary>
 
 Every real build task waits at **Awaiting your approval** after observation and any clarification rounds. **Approve & start building** releases the Builder; **Reject plan** stops the task without starting it. Approval covers the proposed implementation and its configured review/fix rounds.
 
-The task's time limit pauses while waiting for this decision. Refreshing the browser preserves the pending plan. Graceful shutdown stops the task and saves its changes. After a crash or forced termination, restart marks unfinished tasks interrupted. Neither path approves or resumes work automatically.
+The task's time limit pauses while waiting for this decision, and refreshing preserves the pending plan. Graceful shutdown stops the task and saves its changes. After a crash or forced termination, restart marks unfinished tasks interrupted. Neither path approves or resumes work automatically.
 
 Read-only tasks and follow-ups do not start a Builder and do not require this approval gate.
 
-### Team presets, models, and effort
+</details>
+
+<details>
+<summary><strong>Team presets, models, and effort</strong></summary>
 
 Each role stores its provider, model, effort, and additional instructions. **Tool default** leaves the corresponding setting to the installed CLI. The model and effort menus show Relay's configured choices; Codex can also use its visible local model cache. Availability still depends on your installed tool, provider settings, and account.
 
-Use **Save preset** to store a named team and **Use team** to apply the current settings. New tasks save their own team configuration; changing a preset does not rewrite existing tasks. Follow-ups inherit the conversation's Observer settings. Additional instructions do not grant extra tools or editing permissions.
+Use **Save preset** to store a named team and **Use team** to apply the current settings. New tasks save their own team configuration, so changing a preset does not rewrite existing tasks. Follow-ups inherit the conversation's Observer settings. Additional instructions do not grant extra tools or editing permissions.
 
-Adding another AI provider requires a new adapter and compatibility tests; the current integrations are Claude Code and Codex CLI.
+Adding another AI provider requires a new adapter and compatibility tests. The current integrations are Claude Code and Codex CLI.
 
-## Images and screenshots
+</details>
+
+<details>
+<summary><strong>Images and screenshots</strong></summary>
 
 Use **Attach images**, drop files onto the attachment area or prompt, or paste an image into the prompt. Thumbnails show the selected images, with a Remove button for each one.
 
@@ -175,11 +195,14 @@ Use **Attach images**, drop files onto the attachment area or prompt, or paste a
 - Images are saved with the chat when you send the task, outside your project files.
 - Each assigned role receives the references when its provider runs.
 - Follow-ups inherit saved images; findings-based tasks copy them into the new task.
-- Unsent selections stay in browser memory. Reselect them after a manual page reload.
+- Unsent selections stay in memory. Reselect them after a manual page reload.
 
 Starting a real task sends its images, prompts, and relevant project context to the configured agent providers. Image support and usage limits depend on the selected model and tool.
 
-## Read reports and continue the conversation
+</details>
+
+<details>
+<summary><strong>Reports, follow-ups, and findings</strong></summary>
 
 The conversation shows a compact progress state while agents work and the final result when they finish. Individual tool calls and intermediate messages remain in local logs.
 
@@ -192,19 +215,14 @@ New structured reports include:
 
 Older reports remain readable. Missing priority ratings are labeled **Unrated** rather than generated afterward.
 
-### Ask a follow-up
+**Ask a follow-up.** Use **Continue this conversation** below a completed real report. Relay sends the prior questions and reports as context and runs the configured Observer with editing disabled. Answers stay in the same chat, with earlier reports and build changes preserved. Each answer uses a fresh CLI invocation; this is not a resumed desktop-app session. Very long conversations are rejected with a request for a focused new task instead of silently dropping context.
 
-Use **Continue this conversation** below a completed real report. Relay sends the prior questions and reports as context and runs the configured Observer with editing disabled. Answers stay in the same chat, with earlier reports and build changes preserved.
+**Turn findings into a task.** Open **Review findings**, select the issues to address, then choose **Plan selected** or **Build & review selected**. Relay opens an editable draft with the original project, team, selected evidence, and image references. Review it before pressing Start. A build still requires a clean repository and waits for plan approval. Changing the project or choosing **Clear** removes the attached finding context.
 
-Each answer uses a fresh CLI invocation; this is not a resumed desktop-app session. Very long conversations are rejected with a request for a focused new task instead of silently dropping context.
+</details>
 
-### Turn findings into a task
-
-Open **Review findings**, select the issues to address, then choose **Plan selected** or **Build & review selected**.
-
-Relay opens an editable draft with the original project, team, selected evidence, and image references. Review it before pressing Start. A build still requires a clean repository and waits for plan approval. Changing the project or choosing **Clear** removes the attached finding context.
-
-## Review and keep code changes
+<details>
+<summary><strong>Review and keep code changes</strong></summary>
 
 The **Changes** tab provides:
 
@@ -216,11 +234,23 @@ The **Changes** tab provides:
 
 **Reported checks are claims from the Builder, not tests independently rerun by Relay.** The Reviewer inspects source evidence; it does not serve as a separate test runner. A completed task does not establish that every check passed.
 
-Previews are bounded and show notices for truncation, binary files, and unavailable content. Older tasks without saved per-file previews use their existing patch where possible; their new-file bodies may be unavailable. New build snapshots save a complete `changes.patch`, including added, modified, deleted, and binary files, symlinks, and executable permissions. Ignored files are excluded. Generating the patch does not change the working copy’s Git staging area. Older patches may omit new files and are not offered as complete downloads.
+Previews are bounded and show notices for truncation, binary files, and unavailable content. Older tasks without saved per-file previews use their existing patch where possible; their new-file bodies may be unavailable. New build snapshots save a complete `changes.patch`, including added, modified, deleted, and binary files, symlinks, and executable permissions. Ignored files are excluded. Generating the patch does not change the working copy's Git staging area. Older patches may omit new files and are not offered as complete downloads.
 
-After the task finishes, choose **Download complete patch** in **Changes**. In a clean checkout of the same starting commit, run `git apply --check /path/to/relay-<chat-id>.patch`, then `git apply /path/to/relay-<chat-id>.patch`, and rerun your checks. This also preserves new files. You can instead open the displayed working copy, inspect the changes, create a branch there, and commit through your normal Git workflow. **Relay does not automatically merge, commit, or push the result.** Keep any worktrees you still need; remove them using Git's worktree tools when appropriate.
+**To keep the changes**, once the task finishes choose **Download complete patch** in **Changes**. In a clean checkout of the same starting commit, run:
 
-## Recover a failed or interrupted task
+```sh
+git apply --check /path/to/relay-<chat-id>.patch
+git apply /path/to/relay-<chat-id>.patch
+```
+
+Then rerun your checks. This also preserves new files. You can instead open the displayed working copy, inspect the changes, create a branch there, and commit through your normal Git workflow.
+
+**Relay does not automatically merge, commit, or push the result.** Keep any worktrees you still need; remove them using Git's worktree tools when appropriate.
+
+</details>
+
+<details>
+<summary><strong>Recover a failed or interrupted task</strong></summary>
 
 For tasks created with checkpoint support, a **Recover this task** or **Continue interrupted work** panel shows what is saved and which step comes next. Choose the action shown there:
 
@@ -232,13 +262,16 @@ For tasks created with checkpoint support, a **Recover this task** or **Continue
 
 Relay checks that the task folder and working copy still exist and that a build's original commit and repository identity are unchanged. It does not reset, recreate, merge, or commit the working copy. A saved completed review can be reused only if its source fingerprint still matches; changed files require another review.
 
-Each recovery attempt gets a fresh time budget using the task's configured limit. The original review-round cap remains in force. Only one task can run, and a recovery cannot start while a previous worker is finishing its saves. **Recovery history** keeps previous errors and attempt outcomes. Provider prompts/results from retries have distinct attempt filenames.
+Each recovery attempt gets a fresh time budget using the task's configured limit. The original review-round cap remains in force. Only one task can run, and a recovery cannot start while a previous worker is finishing its saves. **Recovery history** keeps previous errors and attempt outcomes. Provider prompts and results from retries have distinct attempt filenames.
 
 Recovery is always explicit. Restart never starts agents or approves a plan on its own. A rejected plan cannot be resumed, and reaching the review-round limit does not grant more rounds. Older tasks and setup failures without a checkpoint need a new task; their working copies remain available for manual inspection.
 
 A checkpoint records results only after Relay receives them. If a process crashes before a result is saved, that unsaved step may need to run again. Existing files remain available; recovery is a fresh CLI invocation with saved context, not a restored provider session.
 
-## Controls and history
+</details>
+
+<details>
+<summary><strong>Controls, history, and deleting chats</strong></summary>
 
 | Control or action | Behavior |
 | --- | --- |
@@ -246,50 +279,83 @@ A checkpoint records results only after Relay receives them. If a process crashe
 | **Stop** | Stop the current process group and prevent later handoffs. Written changes remain available. |
 | **Without limit — rounds** | Continue fix/review rounds until approval, failure, Stop, or a configured deadline. |
 | **Without limit — time** | Remove Relay's deadline; a configured round limit still applies. |
-| Close the browser | Leave the coordinator running in its terminal. |
-| Stop/restart the server | Control+C and SIGTERM stop the agent group and wait for task persistence. After a crash, unfinished tasks become interrupted. No automatic resume. |
+| Close the window | In source mode, leaves the coordinator running in its terminal. |
+| Stop or restart Relay | Quitting or Control+C stops the agent group and waits for task persistence. After a crash, unfinished tasks become interrupted. No automatic resume. |
 
 Unlimited settings do not bypass provider quotas, authentication failures, machine sleep, or process failures. Only one task runs at a time.
 
 Search saved conversations in the sidebar. On smaller screens, use **History** to open the list. **New task** clears the selected conversation and returns to the brief.
 
-### Delete and restore a chat
+**Delete and restore a chat.** Open a chat's **…** menu and choose **Delete chat**, or use that button in a finished chat's activity panel. Running tasks must be stopped first.
 
-Open a chat's **…** menu and choose **Delete chat**, or use that button in a finished chat's activity panel. Running tasks must be stopped first.
+Relay moves the chat, its attachments, prompts, and logs into local Trash. The original project and task worktree remain intact. **Undo** restores the deleted chat while its notification is visible (ten seconds, paused while hovered or focused); successful restoration feedback disappears after four seconds, and errors remain until dismissed or replaced. This does not erase the CLIs' own histories or permanently remove local data.
 
-Relay moves the chat, its attachments, prompts, and logs into local Trash. The original project and task worktree remain intact. **Undo** restores the deleted chat while its notification is visible (ten seconds, paused while hovered or focused). Use the close button to dismiss it. Successful restoration feedback disappears after four seconds. Errors remain until dismissed or replaced. This does not erase the CLIs' own histories or permanently remove local data.
+To restore an older chat manually, quit Relay, move its folder from `trash/<chat-id>/` back to `runs/<chat-id>/` inside the data folder (see [Where your data lives](#where-your-data-lives)), and reopen Relay.
 
-To restore an older chat manually, stop Relay, move its folder from `data/trash/<chat-id>/` back to `data/runs/<chat-id>/`, and restart.
+</details>
 
-## Local data and privacy
+## Privacy and security
 
-| Path | Contents |
+### Where your data lives
+
+| Setup | Data folder |
 | --- | --- |
-| `data/projects.json` | Saved project names and local folder paths |
-| `data/teams.json` | Saved team presets |
-| `data/runs/<chat-id>/state.json` | Conversation turns, status, checkpoints, recovery attempts, reports, findings, approval records, checks, and saved change previews |
-| `data/runs/<chat-id>/attachments/` | Images attached to that chat |
-| `data/runs/<chat-id>/events.jsonl` | Readable activity log |
-| `data/runs/<chat-id>/provider-events.jsonl` | Captured provider output and diagnostics |
-| `data/runs/<chat-id>/*.prompt.txt` | Agent instructions and handoffs |
-| `data/runs/<chat-id>/builder-*.txt` | Builder implementation reports |
-| `data/runs/<chat-id>/changes.patch` | Tracked-file patch |
-| `data/workspaces/<task-id>/` | Separate build worktrees |
-| `data/trash/<chat-id>/` | Recoverable deleted conversations |
+| Packaged app | `~/Library/Application Support/Relay` |
+| Run from source | `./data` inside the Relay folder |
+
+Set `RELAY_DATA_DIR` to use a different folder. Only one Relay may use a data folder at a time.
+
+| Path inside the data folder | Contents |
+| --- | --- |
+| `projects.json` | Saved project names and local folder paths |
+| `teams.json` | Saved team presets |
+| `runs/<chat-id>/state.json` | Conversation turns, status, checkpoints, recovery attempts, reports, findings, approval records, checks, and saved change previews |
+| `runs/<chat-id>/attachments/` | Images attached to that chat |
+| `runs/<chat-id>/events.jsonl` | Readable activity log |
+| `runs/<chat-id>/provider-events.jsonl` | Captured provider output and diagnostics |
+| `runs/<chat-id>/*.prompt.txt` | Agent instructions and handoffs |
+| `runs/<chat-id>/builder-*.txt` | Builder implementation reports |
+| `runs/<chat-id>/changes.patch` | Complete patch of the build's changes |
+| `workspaces/<task-id>/` | Separate build worktrees |
+| `trash/<chat-id>/` | Recoverable deleted conversations |
 
 Relay's combined history is local. The installed tools may save their own sessions, but Relay does not sync a combined conversation into the Claude or Codex desktop apps.
 
 Runtime data is not encrypted by Relay. The supplied `.gitignore` excludes `data/`, environment files, and generated caches. Do not force-add private logs or workspaces to a public repository; ignore rules do not remove files already tracked by Git.
 
-Avoid moving Relay while a task runs. Existing worktrees and saved records can contain absolute paths, so moving the application after creating tasks may require Git worktree repair and path updates.
+Avoid moving Relay while a task runs. Existing worktrees and saved records can contain absolute paths, so moving the data folder after creating tasks may require Git worktree repair and path updates.
 
 ### Security boundaries
 
-Relay is a single-user local application. It binds to loopback, validates request hosts/origins, and requires a per-process token for mutations. These controls are not user authentication. Keep the server local and use trusted projects.
+Relay is a single-user local application. It binds to loopback, validates request hosts and origins, and requires a per-process token for mutations. These controls are not user authentication. Keep the server local and use trusted projects.
 
 Observer and Reviewer roles use read-only tools. Codex uses its read-only sandbox for those roles and workspace-write for the Builder. Claude read roles receive Read, Glob, and Grep; its Builder additionally receives Edit, Write, and Bash. Claude's restricted tool configuration is not an OS sandbox equivalent to Codex's.
 
 Relay supplies no permission-bypass flags. Instructions against deployment, publishing, or pushing are not an independently enforced shell-command policy. Project instructions, dependencies, tool configuration, and agent behavior remain part of the trust boundary.
+
+## Run from source
+
+Prefer the code over the packaged app? Relay's backend uses only Python's standard library, so **no `pip install` or `npm install` is required.**
+
+| Requirement | Details |
+| --- | --- |
+| Python | 3.10 or newer |
+| Git | Required for build tasks and the repository-based test suite |
+| Agent tools | Claude Code, Codex CLI, or both, installed and signed in for the roles you choose |
+| Operating system | macOS is the primary environment. The backend requires POSIX process groups and file locking; Linux is not yet validated and Windows is unsupported. |
+| Node.js 18+ and npm | Optional, for the convenience scripts and frontend checks |
+
+Clone the repository, open a terminal **inside the Relay folder**, sign in to your agents (`claude auth login`, `codex login`), and start Relay:
+
+```sh
+git clone https://github.com/itsdimash/Relay.git
+cd Relay
+python3 server.py --open
+```
+
+The dashboard opens at [http://127.0.0.1:8765](http://127.0.0.1:8765). Keep the terminal running; press **Control+C** to stop the server. On macOS you can also double-click `Start.command`, and `npm start` launches the same server.
+
+For another port, use `python3 server.py --port 8766 --open`. Changing the port does not bypass the data-folder lock.
 
 ## Development
 
@@ -297,17 +363,11 @@ For automatic reload:
 
 ```sh
 python3 dev.py --open
-```
-
-Or, with npm:
-
-```sh
+# or
 npm run dev -- --open
 ```
 
-Python source changes restart the backend after a short debounce. Static asset changes refresh the browser. Reloads wait while a task is active; browser reload also waits while unsent image selections exist. Draft text, mode, limits, and selected chat are retained across automatic refresh; unsaved dialog edits are not.
-
-Stop an existing normal server before switching to development mode. Keep the terminal open and press Control+C to stop it. Changes to `dev.py` itself require restarting the development command.
+Python source changes restart the backend after a short debounce, and static asset changes refresh the browser. Reloads wait while a task is active; browser reload also waits while unsent image selections exist. Draft text, mode, limits, and selected chat are retained across automatic refresh; unsaved dialog edits are not. Stop any normal server before switching to development mode. Changes to `dev.py` itself require restarting the development command.
 
 Run the tests:
 
@@ -326,25 +386,39 @@ node --check static/markdown.js
 node --check static/review.js
 ```
 
-The tests use temporary files/repositories and fake provider processes rather than paid model calls. Node-based renderer tests are skipped if Node.js is unavailable. They cover workflow behavior, plan approval, read-only modes, persistence, image inputs, diff capture, Markdown escaping, and HTTP protections; they do not establish full live-provider compatibility.
+The tests use temporary files and repositories and fake provider processes rather than paid model calls. Node-based renderer tests are skipped if Node.js is unavailable. They cover workflow behavior, plan approval, read-only modes, persistence, image inputs, diff capture, Markdown escaping, and HTTP protections; they do not establish full live-provider compatibility.
 
 Relay uses Python's `ThreadingHTTPServer`, not ASGI. `uvicorn server:app --reload` is not supported.
+
+### Building the macOS app
+
+```sh
+scripts/setup_macos_packaging.sh
+scripts/build_macos_app.sh
+open dist/Relay.app
+```
+
+This produces an ad-hoc-signed Apple-silicon build for local testing. See [Releasing Relay](docs/RELEASING.md) for signing, notarization, and publishing.
 
 ### Project structure
 
 ```text
-server.py                 CLI launcher; composes and starts the backend
-dev.py                    Development reload supervisor
-static/app.js             Frontend startup and feature wiring
-static/js/                Notifications, history, projects, teams, attachments, tasks, and shared helpers
-static/                   Report renderers, styles, HTML, and icons
-relay/                    Backend modules and application composition
-tests/                    Workflow, HTTP, development, and rendering tests
+server.py                  CLI launcher; composes and starts the backend
+dev.py                     Development reload supervisor
+relay/                     Backend modules and application composition
+static/                    Web interface: HTML, styles, report renderers, icons
+static/app.js              Frontend startup and feature wiring
+static/js/                 Notifications, history, projects, teams, attachments, tasks, and shared helpers
+packaging/                 Native macOS app shell (Info.plist, RelayNativeApp.m)
+scripts/                   macOS app build and icon scripts
+dist/                      Packaged app download (Relay-macOS-arm64.zip)
+tests/                     Workflow, HTTP, development, distribution, and rendering tests
 docs/ARCHITECTURE.md       Architecture and implementation details
-CONTRIBUTING.md           Contribution and verification guide
-Start.command             macOS launcher
-package.json              Optional npm convenience scripts
-data/                     Private runtime data; ignored by Git
+docs/RELEASING.md          Building, signing, and publishing the macOS app
+CONTRIBUTING.md            Contribution and verification guide
+Start.command              macOS launcher for source mode
+package.json               Optional npm convenience scripts
+data/                      Private runtime data in source mode; ignored by Git
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for implementation details and [Contributing](CONTRIBUTING.md) before proposing changes.
@@ -353,17 +427,21 @@ See [Architecture](docs/ARCHITECTURE.md) for implementation details and [Contrib
 
 | Problem | What to do |
 | --- | --- |
-| Python cannot find `server.py` | Open a terminal inside the Relay folder, or pass the script's full path. |
-| Agent needs sign-in | Run the relevant login command, then **Refresh connections**. |
+| macOS says Relay "can't be opened" or "can't be verified" | Relay is not notarized yet. Click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** next to the Relay message. |
+| Relay does not run on my Mac | The packaged app needs an Apple silicon Mac on macOS 13 or newer. On Intel Macs, [run from source](#run-from-source). |
+| Agent needs sign-in | Run the relevant login command in Terminal, then choose **Refresh connections**. |
+| Relay cannot find `claude` or `codex` | Set `RELAY_CLAUDE` or `RELAY_CODEX` to the absolute path. When launching the packaged app from Finder, make sure the CLI is installed in a standard location. |
 | Requested model fails | Check the installed CLI's supported models, configuration, and account access; try **Tool default**. |
 | Build rejects a project | Select the repository root and commit or stash pending changes. Read-only modes do not require this. |
-| Codex cannot start inside another agent's sandbox | Launch Relay yourself from Terminal or `Start.command`. |
-| Relay is already running | Use the existing server or stop its terminal process. Changing ports does not bypass the data-folder lock. |
-| Port is occupied | Choose another port with `--port 8766`. |
+| Codex cannot start inside another agent's sandbox | Launch Relay yourself from Terminal, `Start.command`, or the app. |
+| Relay is already running | Use the existing instance or quit it. Changing ports does not bypass the data-folder lock. |
+| Port is occupied (source mode) | Choose another port with `--port 8766`. |
 | Build appears to be waiting | Open the chat: the Observer may need answers, or the final plan may be awaiting approval. |
-| Updated interface behaves incorrectly | Restart a normal server after backend changes and refresh the page, or use development mode. |
-| Photo is rejected | Use PNG, JPEG, or WebP under 4 MB; convert HEIC first. Inherited images count toward the four-image limit. |
+| Updated interface behaves incorrectly (source mode) | Restart the server after backend changes and refresh the page, or use development mode. |
+| Image is rejected | Use PNG, JPEG, or WebP under 4 MB; convert HEIC first. Inherited images count toward the four-image limit. |
 | Task was interrupted | Open it and use the recovery action when available. Otherwise inspect the preserved working copy and start a new task. Nothing resumes automatically. |
+
+Still stuck? [Open an issue](https://github.com/itsdimash/Relay/issues) with your macOS version, how you launched Relay, and the relevant lines from the chat's `events.jsonl`. Remove anything private first.
 
 ## Current limits and next steps
 
@@ -371,13 +449,14 @@ See [Architecture](docs/ARCHITECTURE.md) for implementation details and [Contrib
 - No independent Verifier role or enforced browser visual check for frontend work.
 - No automatic merge, provider quota tracking, or combined spending cap.
 - No incremental history loading, disk quota, or permanent Trash purge interface.
-- No hosted multi-user deployment or Windows support.
+- No hosted multi-user deployment, Windows support, or Intel build of the packaged app.
+- No signed or notarized release, and no automatic updates, yet.
 
 Before a stable release, verify complete live workflows with supported provider versions, including images, and record the environment and results.
 
 ## License
 
-A distribution license has not been selected, and no `LICENSE` file is included yet.
+A distribution license has not been selected, and no `LICENSE` file is included yet. Until one is added, all rights are reserved by the author.
 
 ## Integration references
 
