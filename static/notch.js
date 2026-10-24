@@ -1,4 +1,4 @@
-/** Notch panel: polls the local engine for the active task and shows it with the agent room. */
+/** Notch panel: polls the local engine for the active task and shows it, with music, notes and the agent office. */
 import { createRoom } from './js/notch-room.js';
 
 const $ = id => document.getElementById(id);
@@ -37,10 +37,14 @@ let elapsedAt = 0;
 let notified = '';
 let busy = false;
 let view = 'task';
+let mode = 'compact'; // pill | compact | full, set by the app
+const VIEWS = ['music', 'notes', 'task', 'office'];
 let notes = [];
 let noteBusy = false;
 let inputFocused = false;
 let holding = false;
+let music = null;
+let musicArt = '';
 
 const format = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
@@ -79,7 +83,7 @@ function render(run) {
   $('approval').hidden = !plan;
   if (plan) $('panel').dataset.plan = '1';
   else delete $('panel').dataset.plan;
-  if (plan && view === 'notes') setView('task');
+  if (plan && (view === 'notes' || view === 'music')) setView('task');
   if (plan) {
     $('planSummary').textContent = plan.summary;
     $('planChecks').replaceChildren(...plan.checks.map(check => {
@@ -121,7 +125,7 @@ function notifyNative(run) {
   // A task that finished before the app opened is old news; one that waits for the person is not.
   if (startup && !needsYou) return;
   held = needsYou;
-  if (view === 'notes' && !inputFocused) setView('task');
+  if (view !== 'office' && !(view === 'notes' && inputFocused)) setView('task');
   tell({ type: 'attention', keep: needsYou });
 }
 
@@ -163,19 +167,27 @@ async function decide(path, body) {
   }
 }
 
-// Notes and to-dos. Enter saves a note, Command-Enter saves a to-do.
-function setView(next) {
+// Views: Music, Notes, Task and (in the full panel only) Office.
+const tabs = { music: $('tabMusic'), notes: $('tabNotes'), task: $('tabTask'), office: $('tabOffice') };
+
+function fallbackView() {
+  return music ? 'music' : 'task';
+}
+
+function setView(next, { focus = true } = {}) {
   if (next === 'notes' && current?.plan) next = 'task'; // a waiting plan always comes first
+  if (!VIEWS.includes(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
   view = next;
   $('panel').dataset.view = view;
-  $('tabTask').setAttribute('aria-selected', String(view === 'task'));
-  $('tabNotes').setAttribute('aria-selected', String(view === 'notes'));
-  if (view === 'notes') {
+  for (const [name, tab] of Object.entries(tabs)) tab.setAttribute('aria-selected', String(name === view));
+  if (view === 'notes' && focus) {
     $('noteInput').focus();
     loadNotes();
   } else {
-    $('noteInput').blur();
+    if (view === 'notes') loadNotes();
+    else $('noteInput').blur();
   }
+  tickProgress();
   syncHold();
 }
 
@@ -273,8 +285,20 @@ async function addNote(kind) {
   }
 }
 
-$('tabTask').addEventListener('click', () => setView('task'));
-$('tabNotes').addEventListener('click', () => setView('notes'));
+for (const [name, tab] of Object.entries(tabs)) {
+  tab.addEventListener('click', () => {
+    // The office lives in the full panel: from the small one, this button asks the app to grow it.
+    if (name === 'office' && mode !== 'full') {
+      tell({ type: 'expand', view: 'office' });
+      return;
+    }
+    // Only the Office, and a plan waiting for an answer, need the big panel; every other view goes back to the small one.
+    const needsRoom = name === 'office' || (name === 'task' && !!current?.plan);
+    if (mode === 'full' && !needsRoom) tell({ type: 'shrink' });
+    if (mode === 'compact' && needsRoom) tell({ type: 'expand' });
+    setView(name);
+  });
+}
 $('noteInput').addEventListener('focus', () => { inputFocused = true; syncHold(); });
 $('noteInput').addEventListener('blur', () => { inputFocused = false; syncHold(); });
 $('noteInput').addEventListener('keydown', event => {
@@ -282,10 +306,100 @@ $('noteInput').addEventListener('keydown', event => {
   event.preventDefault();
   addNote(event.metaKey || event.ctrlKey ? 'todo' : 'note');
 });
-// The app calls this when the person opens the panel with the keyboard, so they can start typing at once.
-window.relayNotesFocus = () => {
-  if (!current?.plan) setView('notes');
+// Now playing. The app reads it from the system and calls relayNowPlaying; the buttons send commands back.
+function position() {
+  if (!music || !(music.duration > 0) || !Number.isFinite(music.elapsed)) return null;
+  const rate = music.playing ? (music.rate > 0 ? music.rate : 1) : 0;
+  const since = Math.max(0, (Date.now() - (Number.isFinite(music.updatedAt) ? music.updatedAt : music.receivedAt)) / 1000);
+  return Math.min(music.duration, Math.max(0, music.elapsed + rate * since));
+}
+
+function tickProgress() {
+  if (view !== 'music' || mode === 'pill') return;
+  const pos = position();
+  $('progress').toggleAttribute('data-empty', pos === null);
+  if (pos === null) {
+    $('musicElapsed').textContent = '';
+    $('musicRemaining').textContent = '';
+    return;
+  }
+  $('musicElapsed').textContent = format(Math.floor(pos));
+  $('musicRemaining').textContent = `-${format(Math.max(0, Math.floor(music.duration) - Math.floor(pos)))}`;
+  $('progressFill').style.width = `${(pos / music.duration * 100).toFixed(1)}%`;
+}
+
+function renderMusic() {
+  const panel = $('panel');
+  if (!music) {
+    delete panel.dataset.music;
+    $('musicTitle').textContent = 'Nothing is playing';
+    $('musicArtist').textContent = 'Start music in any app and it shows up here.';
+    $('music').removeAttribute('data-playing');
+    $('pill').removeAttribute('data-playing');
+    tabs.music.removeAttribute('data-live');
+    $('musicArt').hidden = true;
+    $('pillArt').hidden = true;
+    musicArt = '';
+    if (view === 'music' && mode === 'pill') setView(fallbackView(), { focus: false });
+    return;
+  }
+  panel.dataset.music = '1';
+  const artist = music.artist || music.album || '';
+  $('musicTitle').textContent = music.title;
+  $('musicArtist').textContent = artist;
+  $('pillTitle').textContent = music.title;
+  $('pillArtist').textContent = artist;
+  $('music').toggleAttribute('data-playing', !!music.playing);
+  $('pill').toggleAttribute('data-playing', !!music.playing);
+  tabs.music.toggleAttribute('data-live', !!music.playing);
+  $('musicToggle').setAttribute('aria-label', music.playing ? 'Pause' : 'Play');
+  const art = typeof music.artwork === 'string' ? music.artwork : '';
+  if (art !== musicArt) {
+    musicArt = art;
+    for (const id of ['musicArt', 'pillArt']) {
+      if (art) $(id).src = art;
+      else $(id).removeAttribute('src');
+    }
+  }
+  $('musicArt').hidden = !art;
+  $('pillArt').hidden = !art;
+  tickProgress();
+}
+
+window.relayNowPlaying = state => {
+  music = state && typeof state.title === 'string' && state.title ? { ...state, receivedAt: Date.now() } : null;
+  renderMusic();
 };
+
+for (const [id, command] of [['musicPrev', 'previous'], ['musicToggle', 'toggle'], ['musicNext', 'next']]) {
+  $(id).addEventListener('click', () => tell({ type: 'media', command }));
+}
+
+// The app sets the shape of the panel (pill, compact or full) and tells us how tall the notch is.
+window.relayPanelMode = info => {
+  if (!info || typeof info !== 'object') return;
+  const next = ['pill', 'compact', 'full'].includes(info.mode) ? info.mode : 'compact';
+  const root = document.documentElement.style;
+  if (Number.isFinite(info.notchHeight) && info.notchHeight > 0) root.setProperty('--notch-h', `${Math.round(info.notchHeight)}px`);
+  if (Number.isFinite(info.notchWidth) && info.notchWidth > 0) root.setProperty('--notch-w', `${Math.round(info.notchWidth)}px`);
+  mode = next;
+  $('panel').dataset.mode = mode;
+  // A new appearance starts without the keyboard: typing begins only when the person clicks the note field.
+  const wasHolding = holding;
+  $('noteInput').blur();
+  inputFocused = false;
+  holding = false;
+  if (wasHolding) tell({ type: 'hold', on: false });
+  if (mode === 'pill') return;
+  let target = typeof info.view === 'string' ? info.view : view;
+  if (current?.plan && (target === 'notes' || target === 'music')) target = 'task';
+  setView(target, { focus: false });
+  // A plan that needs an answer does not fit in the small panel.
+  if (mode === 'compact' && current?.plan) tell({ type: 'expand' });
+};
+
+// The app may have found something playing before this page finished loading: ask it to send that now.
+tell({ type: 'ready' });
 
 $('approve').addEventListener('click', () => current?.plan && decide('/api/approve-plan', { id: current.id, plan_id: current.plan.id }));
 $('reject').addEventListener('click', () => current?.plan && decide('/api/stop', { id: current.id }));
@@ -298,7 +412,10 @@ document.addEventListener('keydown', event => {
 
 room.start();
 render(null);
+renderMusic();
+setView('task', { focus: false });
 loadNotes();
 poll();
 setInterval(poll, 1000);
 setInterval(tickTimer, 1000);
+setInterval(tickProgress, 500);

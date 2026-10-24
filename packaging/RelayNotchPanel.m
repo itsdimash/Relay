@@ -1,12 +1,26 @@
 #import "RelayNotchPanel.h"
+#import "RelayNowPlaying.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
 
 NSString *const RelayNotchEnabledKey = @"RelayNotchEnabled";
 
-static const CGFloat PanelWidth = 640;
-static const CGFloat PanelHeight = 284;
-static const CGFloat PanelRadius = 28;
+// The panel has three shapes. Heights are measured below the notch band, so they follow the screen's notch.
+typedef NS_ENUM(NSInteger, RelayPanelMode) {
+    RelayPanelModePill = 0,    // a track just changed: cover, title and a moving equalizer, then it retracts
+    RelayPanelModeCompact = 1, // the pointer is on the notch: tabs for Music, Notes and Task
+    RelayPanelModeFull = 2,    // double-tap right Command, or something needs the person: adds the Office
+};
+
+static const CGFloat PillWidth = 380;
+static const CGFloat PillBodyHeight = 46;
+static const CGFloat CompactWidth = 440;
+static const CGFloat CompactBodyHeight = 170;
+static const CGFloat FullWidth = 640;
+static const CGFloat FullBodyHeight = 252;
+static const CGFloat PanelRadius = 26;
+static const NSTimeInterval PillVisibleSeconds = 4.2; // how long a track-change pill stays out
+static const NSTimeInterval PillMinGap = 2.0;         // quick skipping does not flash the pill again and again
 static const CGFloat TriggerMargin = 55;      // hot zone is the notch plus this much on each side
 static const NSTimeInterval ShowDelay = 0.15; // the pointer must rest in the hot zone this long
 static const NSTimeInterval HideDelay = 0.45; // grace period after the pointer leaves the panel
@@ -60,11 +74,19 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 @property(nonatomic, strong) NSScreen *screen;
 @property(nonatomic) BOOL sticky;   // opened with the keyboard: stays until toggled again
 @property(nonatomic) BOOL holding;  // the person is typing a note: do not close because the pointer left
+@property(nonatomic, strong) RelayNowPlaying *nowPlaying; // what is playing, shown as a strip in the panel
 @property(nonatomic) BOOL commandDown;
 @property(nonatomic) BOOL commandTapValid;
 @property(nonatomic) CFAbsoluteTime commandPressedAt;
 @property(nonatomic) CFAbsoluteTime lastTapAt;
 @property(nonatomic) CGFloat progress; // 0: the size of the notch, 1: fully open
+@property(nonatomic) RelayPanelMode mode;
+@property(nonatomic) NSSize shownSize;  // the size at progress 1 for the current mode (animates between modes)
+@property(nonatomic) NSSize contentSize; // what the page is laid out at: the size of the current mode, never animated
+@property(nonatomic, strong) NSTimer *sizeTimer;
+@property(nonatomic, strong) NSTimer *pillTimer;
+@property(nonatomic, copy) NSString *modeView; // the view the page was last asked to show
+@property(nonatomic) CFAbsoluteTime lastPillAt;
 @end
 
 @implementation RelayNotchPanel
@@ -76,6 +98,11 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         _pageURL = pageURL;
         [self buildWindow];
         [self installMonitors];
+        _nowPlaying = [[RelayNowPlaying alloc] init];
+        __weak RelayNotchPanel *weakSelf = self;
+        _nowPlaying.handler = ^(NSDictionary *state) { [weakSelf pushNowPlaying:state]; };
+        _nowPlaying.trackChangeHandler = ^(NSDictionary *state) { [weakSelf showTrackPill]; };
+        if (self.enabled) [_nowPlaying start];
     }
     return self;
 }
@@ -92,13 +119,35 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 
 - (void)setEnabled:(BOOL)enabled {
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:RelayNotchEnabledKey];
-    if (!enabled) [self hideAnimated:YES];
+    if (enabled) {
+        [self.nowPlaying start];
+    } else {
+        [self hideAnimated:YES];
+        [self.nowPlaying stop];
+    }
+}
+
+// Sends what is playing to the panel page. nil clears the music strip.
+- (void)pushNowPlaying:(NSDictionary *)state {
+    NSString *script = @"if (!window.relayNowPlaying) return 'page has no handler yet';"
+                        "window.relayNowPlaying(state);"
+                        "return 'strip ' + (document.getElementById('panel').dataset.music ? 'shown' : 'hidden');";
+    [self.webView callAsyncJavaScript:script
+                            arguments:@{ @"state": state ?: NSNull.null }
+                              inFrame:nil
+                       inContentWorld:WKContentWorld.pageWorld
+                    completionHandler:^(id result, NSError *error) {
+        [RelayNowPlaying log:[NSString stringWithFormat:@"page answered: %@", error ? [NSString stringWithFormat:@"FAILED %@", error] : result]];
+    }];
 }
 
 #pragma mark - Window
 
 - (void)buildWindow {
-    NSRect frame = NSMakeRect(0, 0, PanelWidth, PanelHeight);
+    _mode = RelayPanelModeCompact;
+    _shownSize = NSMakeSize(CompactWidth, 26 + CompactBodyHeight);
+    _contentSize = _shownSize;
+    NSRect frame = NSMakeRect(0, 0, _shownSize.width, _shownSize.height);
     RelayNotchWindow *window = [[RelayNotchWindow alloc] initWithContentRect:frame
                                                                    styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
                                                                      backing:NSBackingStoreBuffered
@@ -130,8 +179,9 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     handler.target = self;
     [configuration.userContentController addScriptMessageHandler:handler name:@"relayPanel"];
     WKWebView *webView = [[RelayNotchWebView alloc] initWithFrame:container.bounds configuration:configuration];
-    // The page keeps its full size and stays pinned to the top while the window grows out of the notch.
-    webView.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin;
+    // The page keeps the size of the current mode and stays pinned to the top while the window grows out of the notch.
+    // layoutWebView places it on every frame, so it must not also resize itself.
+    webView.autoresizingMask = NSViewNotSizable;
     webView.navigationDelegate = self;
     [webView setValue:@NO forKey:@"drawsBackground"];
     [container addSubview:webView];
@@ -173,14 +223,106 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     NSRect area = screen.frame;
     NSSize notch = [self notchSizeForScreen:screen];
     CGFloat amount = MAX(0, progress);
-    CGFloat width = notch.width + (PanelWidth - notch.width) * amount;
-    CGFloat height = notch.height + (PanelHeight - notch.height) * amount;
+    NSSize open = self.shownSize;
+    CGFloat width = notch.width + (MAX(open.width, notch.width) - notch.width) * amount;
+    CGFloat height = notch.height + (MAX(open.height, notch.height) - notch.height) * amount;
     NSRect frame = NSMakeRect(NSMidX(area) - width / 2, NSMaxY(area) - height, width, height);
     [self.window setFrame:frame display:YES];
+    [self layoutWebView];
     CGFloat settled = MIN(1, amount);
     ((NSView *)self.window.contentView).layer.cornerRadius = 9 + (PanelRadius - 9) * settled;
     // The content appears once the panel is mostly open and goes first when it closes.
     self.webView.alphaValue = MIN(1, MAX(0, (settled - 0.5) / 0.4));
+}
+
+// The page always has the full size of the current mode, centered and pinned to the top of the clipped window.
+- (void)layoutWebView {
+    NSRect bounds = ((NSView *)self.window.contentView).bounds;
+    NSSize size = self.contentSize; // the page is not re-laid-out on every frame of a resize
+    NSRect frame = NSMakeRect(round((NSWidth(bounds) - size.width) / 2), NSHeight(bounds) - size.height, size.width, size.height);
+    if (!NSEqualRects(self.webView.frame, frame)) self.webView.frame = frame;
+}
+
+- (NSSize)sizeForMode:(RelayPanelMode)mode screen:(NSScreen *)screen {
+    CGFloat band = [self notchSizeForScreen:screen].height;
+    switch (mode) {
+        case RelayPanelModePill: return NSMakeSize(PillWidth, band + PillBodyHeight);
+        case RelayPanelModeCompact: return NSMakeSize(CompactWidth, band + CompactBodyHeight);
+        case RelayPanelModeFull: return NSMakeSize(FullWidth, band + FullBodyHeight);
+    }
+    return NSMakeSize(CompactWidth, band + CompactBodyHeight);
+}
+
+- (NSScreen *)activeScreen {
+    return self.screen ?: NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+}
+
+// Tells the page which shape it has, how big the notch is, and optionally which view to show.
+- (void)pushMode {
+    NSScreen *screen = [self activeScreen];
+    if (!screen) return;
+    NSSize notch = [self notchSizeForScreen:screen];
+    NSArray *names = @[ @"pill", @"compact", @"full" ];
+    NSDictionary *info = @{ @"mode": names[self.mode], @"notchWidth": @(round(notch.width)), @"notchHeight": @(round(notch.height)),
+                            @"view": self.modeView ?: NSNull.null };
+    NSString *script = @"if (!window.relayPanelMode) return 'page has no mode handler yet'; window.relayPanelMode(info); return 'ok';";
+    [self.webView callAsyncJavaScript:script
+                            arguments:@{ @"info": info }
+                              inFrame:nil
+                       inContentWorld:WKContentWorld.pageWorld
+                    completionHandler:^(id result, NSError *error) {
+        if (error || ![result isEqual:@"ok"]) [RelayNowPlaying log:[NSString stringWithFormat:@"mode push: %@", error ? [NSString stringWithFormat:@"FAILED %@", error] : result]];
+    }];
+}
+
+// Changes the shape. A panel that is already open grows or shrinks smoothly; one that is opening just aims at the new size.
+- (void)changeMode:(RelayPanelMode)mode view:(NSString *)view {
+    BOOL changed = mode != self.mode;
+    self.mode = mode;
+    self.modeView = view;
+    NSScreen *screen = [self activeScreen];
+    if (!screen) return;
+    NSSize target = [self sizeForMode:mode screen:screen];
+    self.contentSize = target;
+    [self pushMode];
+    BOOL settled = self.shown && self.progress >= 1 && !self.frameTimer;
+    if (settled && changed) {
+        [self animateSizeTo:target duration:0.32];
+        return;
+    }
+    [self.sizeTimer invalidate];
+    self.sizeTimer = nil;
+    self.shownSize = target;
+    if (self.shown && !self.frameTimer) [self applyProgress:self.progress];
+}
+
+- (void)animateSizeTo:(NSSize)target duration:(NSTimeInterval)duration {
+    [self.sizeTimer invalidate];
+    self.sizeTimer = nil;
+    NSSize start = self.shownSize;
+    if (duration <= 0 || NSEqualSizes(start, target)) {
+        self.shownSize = target;
+        [self applyProgress:self.progress];
+        return;
+    }
+    NSDate *began = [NSDate date];
+    __weak RelayNotchPanel *weakSelf = self;
+    NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *tick) {
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (!strongSelf) { [tick invalidate]; return; }
+        CGFloat t = MIN(1, -[began timeIntervalSinceNow] / duration);
+        CGFloat eased = 1 - pow(1 - t, 3);
+        strongSelf.shownSize = NSMakeSize(start.width + (target.width - start.width) * eased,
+                                          start.height + (target.height - start.height) * eased);
+        if (t >= 1) {
+            [tick invalidate];
+            strongSelf.sizeTimer = nil;
+            strongSelf.shownSize = target;
+        }
+        [strongSelf applyProgress:strongSelf.progress];
+    }];
+    [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+    self.sizeTimer = timer;
 }
 
 - (void)animateToProgress:(CGFloat)target duration:(NSTimeInterval)duration completion:(void (^)(void))completion {
@@ -213,7 +355,8 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 
 #pragma mark - Showing and hiding
 
-- (void)showOnScreen:(NSScreen *)screen {
+// Opens in the given shape, or grows an open panel to it. A panel never shrinks because something else asked.
+- (void)showOnScreen:(NSScreen *)screen mode:(RelayPanelMode)mode view:(NSString *)view {
     if (!screen) screen = NSScreen.mainScreen ?: NSScreen.screens.firstObject;
     if (!screen) return;
     [self cancelTimer:&_hideTimer];
@@ -221,12 +364,19 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     if (!self.shown) {
         self.shown = YES;
         self.hovered = NO;
+        [self.sizeTimer invalidate];
+        self.sizeTimer = nil;
+        self.progress = 0;
+        [self changeMode:mode view:view];
         [self applyProgress:0];
         [self.window orderFrontRegardless];
-        [self animateToProgress:1 duration:0.5 completion:nil];
-    } else if (self.progress < 1 && !self.frameTimer) {
+        [self animateToProgress:1 duration:mode == RelayPanelModePill ? 0.4 : 0.5 completion:nil];
+        return;
+    }
+    if (mode > self.mode || (view && mode == self.mode && !self.holding)) [self changeMode:MAX(mode, self.mode) view:view];
+    if (self.progress < 1 && !self.frameTimer) {
         [self animateToProgress:1 duration:0.3 completion:nil];
-    } else if (!self.frameTimer) {
+    } else if (!self.frameTimer && !self.sizeTimer) {
         [self applyProgress:1];
     }
 }
@@ -235,6 +385,9 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     [self cancelTimer:&_showTimer];
     [self cancelTimer:&_hideTimer];
     [self cancelTimer:&_doneTimer];
+    [self cancelTimer:&_pillTimer];
+    [self.sizeTimer invalidate];
+    self.sizeTimer = nil;
     self.pinned = NO;
     self.sticky = NO;
     self.hovered = NO;
@@ -249,38 +402,61 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     }];
 }
 
+// Double-tap right Command: open the full panel on the Office, or close it when it is already full.
 - (void)toggle {
-    if (self.shown) {
+    if (self.shown && self.mode == RelayPanelModeFull) {
         [self hideAnimated:YES];
         return;
     }
     [self cancelTimer:&_doneTimer];
+    [self cancelTimer:&_pillTimer];
     self.pinned = YES;
     self.sticky = YES;
-    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation]];
-    // Opened on purpose from the keyboard: take the keys so the person can start typing a note at once.
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeFull view:@"office"];
+    // Opened on purpose from the keyboard: take the keys so Escape works at once.
     [self.window makeKeyWindow];
     [self.window makeFirstResponder:self.webView];
-    [self.webView evaluateJavaScript:@"window.relayNotesFocus && window.relayNotesFocus()" completionHandler:nil];
 }
 
+// Something needs the person (a plan to approve): the full panel, kept until they have looked at it.
 - (void)showPinned {
     if (!self.enabled) return;
     [self cancelTimer:&_doneTimer];
+    [self cancelTimer:&_pillTimer];
     self.pinned = YES;
-    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation]];
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeFull view:nil];
 }
 
 // A task finished or failed: peek in for a few seconds, then leave unless the pointer is on the panel.
 - (void)peek {
     if (!self.enabled) return;
-    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation]];
+    [self cancelTimer:&_pillTimer];
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:@"task"];
     [self cancelTimer:&_doneTimer];
     __weak RelayNotchPanel *weakSelf = self;
     self.doneTimer = [NSTimer scheduledTimerWithTimeInterval:DoneVisibleSeconds repeats:NO block:^(NSTimer *timer) {
         RelayNotchPanel *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.pinned || strongSelf.holding) return;
         if (![strongSelf pointerIsNearPanel]) [strongSelf hideAnimated:YES];
+    }];
+}
+
+// The track changed: the notch grows into a small pill for a few seconds. It never interrupts an open panel.
+- (void)showTrackPill {
+    if (!self.enabled || self.shown) return;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - self.lastPillAt < PillMinGap) return;
+    self.lastPillAt = now;
+    self.pinned = NO;
+    self.sticky = NO;
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModePill view:nil];
+    [self cancelTimer:&_pillTimer];
+    __weak RelayNotchPanel *weakSelf = self;
+    self.pillTimer = [NSTimer scheduledTimerWithTimeInterval:PillVisibleSeconds repeats:NO block:^(NSTimer *timer) {
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.pillTimer = nil;
+        if (strongSelf.shown && strongSelf.mode == RelayPanelModePill) [strongSelf hideAnimated:YES];
     }];
 }
 
@@ -367,8 +543,14 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         if ([self pointerIsNearPanel]) {
             self.hovered = YES;
             [self cancelTimer:&_hideTimer];
+            if (self.mode == RelayPanelModePill) {
+                // The pointer reached the pill: it becomes the compact panel, on the music.
+                [self cancelTimer:&_pillTimer];
+                [self changeMode:RelayPanelModeCompact view:@"music"];
+            }
             return;
         }
+        if (self.mode == RelayPanelModePill) return; // retracts by its own timer
         if (self.holding) {
             [self cancelTimer:&_hideTimer];
             return;
@@ -397,7 +579,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         strongSelf.showTimer = nil;
         if (strongSelf.enabled && !strongSelf.shown && [strongSelf pointerIsInHotZone]) {
             strongSelf.pinned = NO;
-            [strongSelf showOnScreen:[strongSelf screenForPoint:NSEvent.mouseLocation]];
+            [strongSelf showOnScreen:[strongSelf screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:nil];
         }
     }];
 }
@@ -438,6 +620,34 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     } else if ([type isEqualToString:@"attention"]) {
         if ([body[@"keep"] boolValue]) [self showPinned];
         else [self peek];
+    } else if ([type isEqualToString:@"ready"]) {
+        // The page has just loaded and can now show its shape and what is playing.
+        [RelayNowPlaying log:@"page is ready"];
+        if (self.shown) [self pushMode];
+        if (self.nowPlaying.state) [self pushNowPlaying:self.nowPlaying.state];
+    } else if ([type isEqualToString:@"expand"]) {
+        // The small panel needs room: a plan to approve, or the person pressed the Office tab.
+        NSString *view = [body[@"view"] isEqual:@"office"] ? @"office" : nil;
+        if (self.shown) {
+            [self cancelTimer:&_pillTimer];
+            [self showOnScreen:self.screen mode:RelayPanelModeFull view:view];
+            // Pressed on purpose: take the keys so Escape closes it. It still closes when the pointer leaves.
+            if (view) {
+                [self.window makeKeyWindow];
+                [self.window makeFirstResponder:self.webView];
+            }
+        }
+    } else if ([type isEqualToString:@"shrink"]) {
+        // The person left the Office (or the plan) for a view that fits the small panel.
+        if (self.shown && self.mode == RelayPanelModeFull) {
+            [self cancelTimer:&_doneTimer];
+            self.sticky = NO;
+            self.pinned = NO;
+            self.hovered = YES;
+            [self changeMode:RelayPanelModeCompact view:nil];
+        }
+    } else if ([type isEqualToString:@"media"]) {
+        [self.nowPlaying sendCommand:body[@"command"]];
     } else if ([type isEqualToString:@"hold"]) {
         // The note field has the keyboard: keep the panel open until typing stops or Escape.
         self.holding = [body[@"on"] boolValue];
@@ -458,6 +668,12 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     NSURL *url = action.request.URL;
     BOOL local = [url.host isEqualToString:self.pageURL.host] && [url.port isEqualToNumber:self.pageURL.port];
     decisionHandler(local ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+}
+
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    // The page may have been reloaded while open or while something was playing.
+    if (self.shown) [self pushMode];
+    if (self.nowPlaying.state) [self pushNowPlaying:self.nowPlaying.state];
 }
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {

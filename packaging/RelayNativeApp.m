@@ -2,6 +2,7 @@
 // The engine (RelayServer) serves the dashboard on 127.0.0.1; this app starts it,
 // shows the dashboard in a native window, and stops the engine when the app quits.
 #import <Cocoa/Cocoa.h>
+#include <signal.h>
 #import <WebKit/WebKit.h>
 #import "RelayNotchPanel.h"
 
@@ -479,7 +480,16 @@ static NSColor *RelayColor(unsigned int rgb) {
 // Quit waits for the engine to save any running task before the app exits.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (self.mayTerminate || !self.server.running) return NSTerminateNow;
-    if (!self.quitting) { self.quitting = YES; [self.server terminate]; }
+    if (!self.quitting) {
+        self.quitting = YES;
+        NSTask *engine = self.server;
+        [engine terminate];
+        // The engine saves a running task before it exits, which can take a while. If it is still there after
+        // 10 seconds, stop waiting: Quit must always finish. The data folder is released when the process ends.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            if (engine.running) kill(engine.processIdentifier, SIGKILL);
+        });
+    }
     return NSTerminateCancel;
 }
 

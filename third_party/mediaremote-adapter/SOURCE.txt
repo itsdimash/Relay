@@ -1,0 +1,12 @@
+MediaRemoteAdapter, unmodified.
+
+Project:  https://github.com/ungive/mediaremote-adapter
+Release:  v0.7.7 (2026-09-03)
+Commit:   e3ff5021eb0875858bd05f48d2e9ba2e962d1cf6
+Licence:  BSD 3-Clause (see LICENSE). Copyright (c) 2025 Jonas van den Berg and contributors.
+
+Relay uses it to read what is playing on the Mac (Apple Music, Spotify, YouTube in Chrome, Yandex Music
+and anything else that shows in Control Center) for the music strip in the notch panel.
+scripts/build_macos_app.sh compiles it into Relay.app/Contents/Frameworks. The test client, the CMake files
+and the scripts are left out, except src/test/NowPlayingTest.h, which adapter/test.m imports. To update: copy src/adapter, src/private, src/utility, include/ and bin/ from a newer release,
+and change this file.
