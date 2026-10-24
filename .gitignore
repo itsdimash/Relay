@@ -14,3 +14,4 @@ npm-debug.log*
 .venv-packaging/
 build/
 dist/Relay.app/
+dist/
