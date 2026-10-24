@@ -26,6 +26,17 @@ MAX_DOWNLOAD = 400 * 1024 * 1024
 _VERSION = re.compile(r'^v?(\d+)\.(\d+)\.(\d+)')
 
 
+def clean_environment(environment):
+    """Environment for the swap helper without PyInstaller's private variables.
+
+    Leftover _PYI*/_MEIPASS2 values would make a relaunched app reuse this engine's
+    temporary folder, which is deleted when the engine exits.
+    """
+    cleaned = {k: v for k, v in environment.items() if not k.startswith('_PYI') and k != '_MEIPASS2'}
+    cleaned['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+    return cleaned
+
+
 def parse_version(text):
     match = _VERSION.match(str(text or '').strip())
     return tuple(int(part) for part in match.groups()) if match else None
@@ -175,6 +186,7 @@ class Updater:
             '    mv "$BACKUP" "$OLD"',
             '  fi',
             'fi',
+            'sleep 1',
             '/usr/bin/open "$OLD"',
             'rm -rf "$WORK"',
             '',
@@ -196,7 +208,7 @@ class Updater:
             script.write_text(self.swap_script(app_pid, self.app_path, new_app, workspace))
             script.chmod(script.stat().st_mode | stat.S_IXUSR)
             subprocess.Popen(['/bin/sh', str(script)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+                             stderr=subprocess.DEVNULL, start_new_session=True, env=clean_environment(os.environ))
         except Exception:
             shutil.rmtree(workspace, ignore_errors=True)
             raise

@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 
 from relay import updater
-from relay.updater import Updater, describe, parse_version, pick_asset
+from relay.updater import Updater, clean_environment, describe, parse_version, pick_asset
 
 
 def release(tag='v0.2.0', assets=True):
@@ -29,6 +29,16 @@ class VersionTests(unittest.TestCase):
     def test_only_https_assets_are_trusted(self):
         bad = {'assets': [{'name': updater.ASSET, 'browser_download_url': 'http://example.com/a.zip'}]}
         self.assertEqual(pick_asset(bad, updater.ASSET), '')
+
+
+class EnvironmentTests(unittest.TestCase):
+    def test_pyinstaller_variables_are_removed(self):
+        cleaned = clean_environment({'PATH': '/usr/bin', '_MEIPASS2': '/tmp/_MEI1', '_PYI_ARCHIVE_FILE': 'x', 'HOME': '/h'})
+        self.assertEqual(cleaned['PATH'], '/usr/bin')
+        self.assertEqual(cleaned['HOME'], '/h')
+        self.assertNotIn('_MEIPASS2', cleaned)
+        self.assertNotIn('_PYI_ARCHIVE_FILE', cleaned)
+        self.assertEqual(cleaned['PYINSTALLER_RESET_ENVIRONMENT'], '1')
 
 
 class UpdaterTests(unittest.TestCase):
