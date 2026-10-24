@@ -192,18 +192,12 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     }
     NSDate *began = [NSDate date];
     __weak RelayNotchPanel *weakSelf = self;
-    NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 90 repeats:YES block:^(NSTimer *tick) {
+    NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *tick) {
         RelayNotchPanel *strongSelf = weakSelf;
         if (!strongSelf) { [tick invalidate]; return; }
         CGFloat t = MIN(1, -[began timeIntervalSinceNow] / duration);
-        CGFloat eased;
-        if (target > start) {
-            // Opening: fast start, a small overshoot, then settle.
-            CGFloat u = t - 1;
-            eased = 1 + 2.2 * u * u * u + 1.2 * u * u;
-        } else {
-            eased = t * t * t;
-        }
+        // No overshoot: opening eases out and closing eases in and out, so the motion stays smooth.
+        CGFloat eased = target > start ? 1 - pow(1 - t, 4) : t * t * (3 - 2 * t);
         [strongSelf applyProgress:start + (target - start) * eased];
         if (t >= 1) {
             [tick invalidate];
@@ -228,7 +222,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         self.hovered = NO;
         [self applyProgress:0];
         [self.window orderFrontRegardless];
-        [self animateToProgress:1 duration:0.45 completion:nil];
+        [self animateToProgress:1 duration:0.5 completion:nil];
     } else if (self.progress < 1 && !self.frameTimer) {
         [self animateToProgress:1 duration:0.3 completion:nil];
     } else if (!self.frameTimer) {
@@ -246,7 +240,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     if (!self.shown) return;
     self.shown = NO;
     __weak RelayNotchPanel *weakSelf = self;
-    [self animateToProgress:0 duration:animated ? 0.28 : 0 completion:^{
+    [self animateToProgress:0 duration:animated ? 0.32 : 0 completion:^{
         // A new show request may have started while this was running.
         RelayNotchPanel *strongSelf = weakSelf;
         if (strongSelf && !strongSelf.shown) [strongSelf.window orderOut:nil];
