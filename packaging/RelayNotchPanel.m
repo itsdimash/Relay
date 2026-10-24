@@ -106,7 +106,8 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     window.level = NSMainMenuWindowLevel + 2;
     window.opaque = NO;
     window.backgroundColor = NSColor.clearColor;
-    window.hasShadow = YES;
+    // The system shadow also draws a thin light rim along the top edge; the panel does not need either.
+    window.hasShadow = NO;
     window.hidesOnDeactivate = NO;
     window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
@@ -179,7 +180,6 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     ((NSView *)self.window.contentView).layer.cornerRadius = 9 + (PanelRadius - 9) * settled;
     // The content appears once the panel is mostly open and goes first when it closes.
     self.webView.alphaValue = MIN(1, MAX(0, (settled - 0.5) / 0.4));
-    [self.window invalidateShadow];
 }
 
 - (void)animateToProgress:(CGFloat)target duration:(NSTimeInterval)duration completion:(void (^)(void))completion {
