@@ -45,3 +45,5 @@ The `macOS release` workflow tests the project, builds and signs the app, submit
 Each release attaches `Relay-macOS-arm64.dmg` (the recommended download), `Relay-macOS-arm64.zip`, and a `.sha256` checksum for each. Without the Apple secrets above, the workflow still publishes an ad-hoc-signed build and says in the release notes that it is not notarized.
 
 Once a release exists, the stable download link is `https://github.com/itsdimash/Relay/releases/latest/download/Relay-macOS-arm64.dmg`.
+
+Installed copies of Relay check the latest release on launch and offer an in-app update. That update uses `Relay-macOS-arm64.zip` and its `.sha256`, so keep both attached to every release; a release without them is ignored.
