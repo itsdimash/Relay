@@ -1,8 +1,10 @@
 import os
 import subprocess
+from pathlib import Path
+import tempfile
 import unittest
 
-from relay.environment import augment_path, login_shell_path, prepare_environment
+from relay.environment import augment_path, login_shell_path, prepare_environment, quick_prepare_environment
 
 
 class AugmentPathTests(unittest.TestCase):
@@ -50,3 +52,55 @@ class LoginShellTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QuickPrepareTests(unittest.TestCase):
+    # augment_path keeps only folders that exist, so the fake shell folders are real temporary folders.
+    def folders(self, folder, *names):
+        paths = []
+        for name in names:
+            path = Path(folder) / name
+            path.mkdir()
+            paths.append(str(path))
+        return paths
+
+    def test_first_launch_reads_the_shell_and_remembers_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (nvm,) = self.folders(folder, 'nvm')
+            cache = Path(folder) / 'login-path.txt'
+            env = {'PATH': '/usr/bin'}
+            quick_prepare_environment(cache, env, read_login_path=lambda: nvm, start=lambda job: self.fail('no cache: no background job'))
+            self.assertIn(nvm, env['PATH'])
+            self.assertEqual(cache.read_text().strip(), nvm)
+
+    def test_later_launches_use_the_cache_without_waiting_for_the_shell(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (nvm,) = self.folders(folder, 'nvm')
+            cache = Path(folder) / 'login-path.txt'
+            cache.write_text(nvm + '\n')
+            env = {'PATH': '/usr/bin'}
+            jobs = []
+
+            def slow_shell():
+                raise AssertionError('the launch must not wait for the shell')
+
+            quick_prepare_environment(cache, env, read_login_path=slow_shell, start=jobs.append)
+            self.assertIn(nvm, env['PATH'])  # available at once
+            self.assertEqual(len(jobs), 1)    # the shell is asked later, in the background
+
+    def test_background_refresh_updates_path_and_cache_when_the_shell_changed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            old, new = self.folders(folder, 'old', 'new')
+            cache = Path(folder) / 'login-path.txt'
+            cache.write_text(old + '\n')
+            env = {'PATH': '/usr/bin'}
+            jobs = []
+            quick_prepare_environment(cache, env, read_login_path=lambda: new, start=jobs.append)
+            jobs[0]()
+            self.assertIn(new, env['PATH'])
+            self.assertEqual(cache.read_text().strip(), new)
+
+    def test_an_unwritable_cache_does_not_break_the_launch(self):
+        env = {'PATH': '/usr/bin'}
+        quick_prepare_environment('/definitely/not/writable/login-path.txt', env, read_login_path=lambda: '/x/bin', start=lambda job: None)
+        self.assertTrue(env['PATH'].startswith('/usr/bin'))

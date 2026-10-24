@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from relay.application import Application
-from relay.environment import prepare_environment
+from relay.environment import quick_prepare_environment
 
 
 def application_paths(*, frozen=None, bundle_root=None, environment=None, home=None):
@@ -26,7 +26,7 @@ def application_paths(*, frozen=None, bundle_root=None, environment=None, home=N
 ROOT, DATA = application_paths()
 if getattr(sys, 'frozen', False):
     # Opened from Finder, the app starts with a minimal PATH; agents need the user's tools.
-    prepare_environment()
+    quick_prepare_environment(DATA / 'login-path.txt')
 application = Application(ROOT, DATA)
 
 

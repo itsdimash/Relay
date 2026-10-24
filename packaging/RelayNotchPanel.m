@@ -65,6 +65,8 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 @property(nonatomic, strong) RelayNotchWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSTimer *pollTimer;
+@property(nonatomic, strong) id activity;       // keeps macOS from slowing the pointer watch (App Nap) when Relay is in the background
+@property(nonatomic, strong) id mouseMonitor;   // wakes the watch on every pointer move, in any app
 @property(nonatomic, strong) NSTimer *showTimer;
 @property(nonatomic, strong) NSTimer *hideTimer;
 @property(nonatomic, strong) NSTimer *doneTimer;
@@ -583,6 +585,13 @@ static NSColor *DominantColor(NSString *dataURL) {
 - (void)installMonitors {
     if (self.pollTimer) return;
     __weak RelayNotchPanel *weakSelf = self;
+    // Without this, macOS slows timers right down once Relay is not the front app, and the hover and the
+    // double Command tap stop responding anywhere except in Relay itself.
+    self.activity = [NSProcessInfo.processInfo beginActivityWithOptions:(NSActivityUserInitiated | NSActivityLatencyCritical)
+                                                                  reason:@"Watching the pointer and the Command key for the notch panel"];
+    // Pointer events from other apps need no special permission, and they also wake the app if it was napping.
+    self.mouseMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+                                                               handler:^(NSEvent *event) { [weakSelf pointerMoved]; }];
     NSTimer *timer = [NSTimer timerWithTimeInterval:0.025 repeats:YES block:^(NSTimer *tick) {
         [weakSelf pointerMoved];
     }];
@@ -592,6 +601,10 @@ static NSColor *DominantColor(NSString *dataURL) {
 }
 
 - (void)removeMonitors {
+    if (self.mouseMonitor) [NSEvent removeMonitor:self.mouseMonitor];
+    self.mouseMonitor = nil;
+    if (self.activity) [NSProcessInfo.processInfo endActivity:self.activity];
+    self.activity = nil;
     [self.pollTimer invalidate];
     self.pollTimer = nil;
     [self cancelTimer:&_showTimer];

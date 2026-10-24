@@ -180,3 +180,27 @@ class AmbientLightTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NotchWorksInEveryAppTests(unittest.TestCase):
+    def test_the_pointer_watch_is_not_slowed_when_relay_is_in_the_background(self):
+        native = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()
+        # macOS App Nap slows timers of background apps, so hover and double-Command stopped working outside Relay.
+        self.assertIn('beginActivityWithOptions', native)
+        self.assertIn('NSActivityLatencyCritical', native)
+        self.assertIn('addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved', native)
+        self.assertIn('endActivity', native)
+
+    def test_the_panel_opens_on_the_notes_first_and_then_on_the_last_tab_chosen(self):
+        html = (ROOT / 'static' / 'notch.html').read_text()
+        script = (ROOT / 'static' / 'notch.js').read_text()
+        native = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()
+        self.assertIn('data-view="notes"', html)
+        self.assertIn("let chosenView = 'notes';", script)
+        self.assertIn("setView('notes', { focus: false });", script)
+        # A tab click is remembered, and a fresh appearance without an explicit view comes back to it.
+        self.assertIn("if (name !== 'office') chosenView = name;", script)
+        self.assertIn("typeof info.view === 'string' ? info.view : chosenView", script)
+        # The hover does not force a tab; the page decides.
+        self.assertIn('mode:RelayPanelModeCompact view:nil];', native)
+        self.assertNotIn('RelayPanelModeCompact view:@"notes"', native)

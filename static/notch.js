@@ -36,7 +36,9 @@ let elapsedBase = 0;
 let elapsedAt = 0;
 let notified = '';
 let busy = false;
-let view = 'task';
+let view = 'notes';
+// The tab the person picked last. The first opening after the app starts is the Notes; after that the panel comes back to this.
+let chosenView = 'notes';
 let mode = 'compact'; // pill | compact | full, set by the app
 const VIEWS = ['music', 'notes', 'task', 'office'];
 let notes = [];
@@ -174,7 +176,7 @@ async function decide(path, body) {
 const tabs = { music: $('tabMusic'), notes: $('tabNotes'), task: $('tabTask'), office: $('tabOffice') };
 
 function fallbackView() {
-  return music ? 'music' : 'task';
+  return chosenView;
 }
 
 function setView(next, { focus = true } = {}) {
@@ -291,6 +293,7 @@ async function addNote(kind) {
 
 for (const [name, tab] of Object.entries(tabs)) {
   tab.addEventListener('click', () => {
+    if (name !== 'office') chosenView = name; // the Office needs the big panel, so it is never what a hover comes back to
     // The office lives in the full panel: from the small one, this button asks the app to grow it.
     if (name === 'office' && mode !== 'full') {
       tell({ type: 'expand', view: 'office' });
@@ -493,7 +496,7 @@ window.relayPanelMode = info => {
   holding = false;
   if (wasHolding) tell({ type: 'hold', on: false });
   if (mode === 'pill') return;
-  let target = typeof info.view === 'string' ? info.view : view;
+  let target = typeof info.view === 'string' ? info.view : chosenView;
   if (current?.plan && (target === 'notes' || target === 'music')) target = 'task';
   setView(target, { focus: false });
   // A plan that needs an answer does not fit in the small panel.
@@ -515,7 +518,7 @@ document.addEventListener('keydown', event => {
 room.start();
 render(null);
 renderMusic();
-setView('task', { focus: false });
+setView('notes', { focus: false });
 loadNotes();
 poll();
 setInterval(poll, 1000);
