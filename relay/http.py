@@ -93,6 +93,9 @@ class Handler(BaseHTTPRequestHandler):
         files['/notifications.css'] = ('notifications.css', 'text/css; charset=utf-8')
         files['/workspace.css'] = ('workspace.css', 'text/css; charset=utf-8')
         files['/motion.css'] = ('motion.css', 'text/css; charset=utf-8')
+        files['/brand.css'] = ('brand.css', 'text/css; charset=utf-8')
+        files['/fonts/geologica.woff2'] = ('fonts/geologica.woff2', 'font/woff2')
+        files['/fonts/jetbrains-mono.woff2'] = ('fonts/jetbrains-mono.woff2', 'font/woff2')
         if path in files:
             name, mime = files[path]
             return self.respond((self.app.ROOT / 'static' / name).read_bytes(), content_type=mime)

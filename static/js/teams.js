@@ -129,6 +129,21 @@ export function createTeams({
       $('teamPreset').focus();
     });
     $('cancelTeam').addEventListener('click', () => $('teamDialog').close());
+    for (const card of document.querySelectorAll('.agent-card')) {
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', card.querySelector('h2').firstChild.textContent + ': change tool, model and effort');
+      const open = () => {
+        if (!$('configureTeam').disabled) $('configureTeam').click();
+      };
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
+      });
+    }
     $('teamPreset').addEventListener('change', () => {
       $('teamError').textContent = '';
       $('teamNotice').textContent = '';
