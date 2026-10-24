@@ -58,6 +58,9 @@ function actorKey(run) {
 function render(run) {
   const key = actorKey(run);
   $('panel').dataset.actor = key;
+  $('panel').toggleAttribute('data-working', !!run?.running && !run.paused);
+  tabs.task.toggleAttribute('data-live', !!run?.running && !run.paused);
+  updateGlow();
   const [status, line] = LINES[run?.status] || LINES.idle;
   $('status').textContent = run?.paused ? 'Paused' : status;
   $('title').textContent = run ? run.title || 'Task' : 'Nothing running';
@@ -179,6 +182,7 @@ function setView(next, { focus = true } = {}) {
   if (!VIEWS.includes(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
   view = next;
   $('panel').dataset.view = view;
+  updateGlow();
   for (const [name, tab] of Object.entries(tabs)) tab.setAttribute('aria-selected', String(name === view));
   if (view === 'notes' && focus) {
     $('noteInput').focus();
@@ -328,10 +332,94 @@ function tickProgress() {
   $('progressFill').style.width = `${(pos / music.duration * 100).toFixed(1)}%`;
 }
 
+// The colour of the cover, for the glow, the equalizer and the dot on the Music tab.
+const colours = new Map();
+function coverColour(src) {
+  if (colours.has(src)) return Promise.resolve(colours.get(src));
+  return new Promise(resolve => {
+    const image = new Image();
+    image.onload = () => {
+      let found = null;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 16;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0, 16, 16);
+        const data = context.getImageData(0, 0, 16, 16).data;
+        let r = 0, g = 0, b = 0, weight = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const high = Math.max(data[i], data[i + 1], data[i + 2]);
+          const low = Math.min(data[i], data[i + 1], data[i + 2]);
+          // Vivid, bright pixels speak for the cover; grey and dark ones barely count.
+          const w = ((high ? (high - low) / high : 0) ** 2) * (high / 255) + 0.01;
+          r += data[i] * w; g += data[i + 1] * w; b += data[i + 2] * w; weight += w;
+        }
+        r /= weight; g /= weight; b /= weight;
+        const top = Math.max(r, g, b);
+        if (top > 0) {
+          const lift = top < 170 ? 170 / top : 1; // dark covers still need a visible glow
+          found = `rgb(${Math.min(255, Math.round(r * lift))}, ${Math.min(255, Math.round(g * lift))}, ${Math.min(255, Math.round(b * lift))})`;
+        }
+      } catch (_) {
+        /* No canvas, or the image cannot be read: keep the default colour. */
+      }
+      colours.set(src, found);
+      if (colours.size > 20) colours.delete(colours.keys().next().value);
+      resolve(found);
+    };
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
+// The cover frame takes the cover's own shape (9:16, 3:4, square, 16:9...), so the whole picture shows.
+function resetCoverShape() {
+  const style = $('panel').style;
+  for (const name of ['--cover-w', '--cover-h', '--pill-w', '--pill-h']) style.removeProperty(name);
+}
+
+function fitInto(ratio, maxWidth, maxHeight) {
+  const width = Math.min(maxWidth, maxHeight * ratio);
+  return [Math.round(width), Math.round(width / ratio)];
+}
+
+function fitCoverShape() {
+  const { naturalWidth: width, naturalHeight: height } = $('musicArt');
+  const ratio = width && height ? Math.min(3, Math.max(0.5, width / height)) : 1;
+  if (Math.abs(ratio - 1) < 0.03) {
+    resetCoverShape(); // square covers fill the square frame
+    return;
+  }
+  const style = $('panel').style;
+  const [coverWidth, coverHeight] = fitInto(ratio, 150, 112);
+  const [pillWidth, pillHeight] = fitInto(ratio, 38, 24);
+  style.setProperty('--cover-w', `${coverWidth}px`);
+  style.setProperty('--cover-h', `${coverHeight}px`);
+  style.setProperty('--pill-w', `${pillWidth}px`);
+  style.setProperty('--pill-h', `${pillHeight}px`);
+}
+$('musicArt').addEventListener('load', fitCoverShape);
+
+// What gives off light: agents at work, or music. The Music view prefers the music, everything else the agents.
+function updateGlow() {
+  const panel = $('panel');
+  const working = !!current?.running && !current.paused;
+  const playing = !!music?.playing;
+  let glow = '';
+  if (mode === 'pill') glow = playing ? 'music' : '';
+  else if (view === 'music') glow = playing ? 'music' : working ? 'agent' : '';
+  else glow = working ? 'agent' : playing ? 'music' : '';
+  if (glow) panel.dataset.glow = glow;
+  else delete panel.dataset.glow;
+  room.setMusic(playing);
+}
+
 function renderMusic() {
   const panel = $('panel');
   if (!music) {
     delete panel.dataset.music;
+    panel.style.removeProperty('--cover');
+    resetCoverShape();
     $('musicTitle').textContent = 'Nothing is playing';
     $('musicArtist').textContent = 'Start music in any app and it shows up here.';
     $('music').removeAttribute('data-playing');
@@ -339,8 +427,10 @@ function renderMusic() {
     tabs.music.removeAttribute('data-live');
     $('musicArt').hidden = true;
     $('pillArt').hidden = true;
+    $('musicSource').hidden = true;
     musicArt = '';
     if (view === 'music' && mode === 'pill') setView(fallbackView(), { focus: false });
+    updateGlow();
     return;
   }
   panel.dataset.music = '1';
@@ -360,9 +450,20 @@ function renderMusic() {
       if (art) $(id).src = art;
       else $(id).removeAttribute('src');
     }
+    panel.style.removeProperty('--cover');
+    resetCoverShape();
+    if (art) coverColour(art).then(colour => { if (colour && art === musicArt) panel.style.setProperty('--cover', colour); });
   }
   $('musicArt').hidden = !art;
   $('pillArt').hidden = !art;
+  // Where the sound comes from: the app's icon and name, when the app told us.
+  const appName = typeof music.appName === 'string' ? music.appName : '';
+  const appIcon = typeof music.appIcon === 'string' && music.appIcon.startsWith('data:image/png') ? music.appIcon : '';
+  $('musicSource').hidden = !appName;
+  $('musicApp').textContent = appName;
+  $('musicAppIcon').hidden = !appIcon;
+  if (appIcon && $('musicAppIcon').getAttribute('src') !== appIcon) $('musicAppIcon').src = appIcon;
+  updateGlow();
   tickProgress();
 }
 
@@ -384,6 +485,7 @@ window.relayPanelMode = info => {
   if (Number.isFinite(info.notchWidth) && info.notchWidth > 0) root.setProperty('--notch-w', `${Math.round(info.notchWidth)}px`);
   mode = next;
   $('panel').dataset.mode = mode;
+  updateGlow();
   // A new appearance starts without the keyboard: typing begins only when the person clicks the note field.
   const wasHolding = holding;
   $('noteInput').blur();

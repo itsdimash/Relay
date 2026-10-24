@@ -17,6 +17,7 @@ const COLORS = {
 const SKIN = '#f1c9a5';
 const Z = ['111', '001', '010', '100', '111'];
 const CHECK = ['0001', '0010', '1100', '0100'];
+const NOTE = ['0011', '0010', '0010', '1110', '1110'];
 
 function hash(n) {
   const x = Math.sin(n * 127.1) * 43758.5453;
@@ -30,6 +31,7 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
   const baton = { x: HOME.observer + 5, y: 56, trail: [] };
   const particles = [];
   let scene = { actor: null, terminal: null };
+  let music = false;
   let previousTerminal = null;
   let holder = 'observer';
   let timer = null;
@@ -53,6 +55,12 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       for (let i = 0; i < 60; i++) step(i / 10);
       render(0);
     }
+  }
+
+  // Music playing: the agents wear headphones, nod along, and little notes float up in their colours.
+  function setMusic(playing) {
+    music = !!playing;
+    if (reducedMotion) render(0);
   }
 
   function confetti() {
@@ -95,8 +103,13 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
     baton.trail.push([baton.x, baton.y]);
     if (baton.trail.length > 7) baton.trail.shift();
     for (const role of ROLES) if (scene.actor === role) spawn(role, t);
+    if (music && !reducedMotion && hash(t * 5 + 1) > 0.93) {
+      const role = ROLES[Math.floor(hash(t * 11) * 3)];
+      const a = agents[role];
+      particles.push({ x: a.x + 3, y: a.y - 3, vx: 0, vy: -0.5 - hash(t + 4) * 0.3, life: 1, decay: 0.017, color: COLORS[role].glow, gravity: 0, note: true, sway: hash(t * 3) * 6.28 });
+    }
     for (const p of particles) {
-      p.x += p.vx;
+      p.x += p.vx + (p.note ? Math.sin(p.life * 9 + p.sway) * 0.3 : 0);
       p.y += p.vy;
       p.vy += p.gravity || 0;
       p.life -= p.decay;
@@ -122,6 +135,22 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
     rect(152, 10, 16, 2, '#1d2a3b');
     rect(152, 14, 16, 2, '#1d2a3b');
     rect(152, 18, 16, 2, '#1d2a3b');
+    if (music) {
+      // The picture on the wall becomes a level meter.
+      rect(72, 10, 18, 8, '#0a1019');
+      const tick = reducedMotion ? 0 : Math.floor(t * 8);
+      for (let i = 0; i < 5; i++) {
+        const level = 1 + Math.floor((reducedMotion ? 0.6 : hash(tick * 5 + i)) * 6);
+        rect(73 + i * 3.4, 18 - level, 2, level, COLORS[ROLES[i % 3]].glow);
+      }
+    }
+    if (music) {
+      // A slow colour wash over the floor, in the three agents' colours in turn.
+      const wash = COLORS[ROLES[Math.floor(t / 1.6) % 3]].glow;
+      ctx.globalAlpha = reducedMotion ? 0.05 : 0.04 + 0.04 * Math.sin(t * 6.5);
+      rect(0, 36, W, H - 36, wash);
+      ctx.globalAlpha = 1;
+    }
   }
 
   function drawMonitor(role, working, t) {
@@ -156,7 +185,18 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
     const x = Math.round(a.x);
     const y = Math.round(a.y);
     const working = scene.actor === role;
-    const bob = working && !reducedMotion ? Math.round(Math.sin(t * 9) * 0.6 + 0.4) : 0;
+    const phase = ROLES.indexOf(role) * 1.3;
+    let bob = 0;
+    if (!reducedMotion) {
+      if (working) bob = Math.round(Math.sin(t * 9) * 0.6 + 0.4);
+      else if (music) bob = Math.round(Math.sin(t * 6.5 + phase) * 0.5 + 0.5); // nodding to the beat
+    }
+    if (working && !reducedMotion) {
+      // A halo in the agent's colour, so it is clear who has the baton.
+      ctx.globalAlpha = 0.14 + 0.08 * Math.sin(t * 4);
+      rect(x - 8, y - 3, 16, 24, c.glow);
+      ctx.globalAlpha = 1;
+    }
     const blink = !reducedMotion && Math.floor(t * 2.2) % 9 === 0;
     // body
     rect(x - 4, y + 6 + bob, 8, 9, c.body);
@@ -177,6 +217,16 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       rect(x, y + 2 + bob, 3, 3, 'rgba(191,231,239,0.35)');
     }
     if (role === 'reviewer') rect(x + 4, y + 8 + bob, 3, 5, '#e8e0c8');
+    if (music) {
+      // Headphones: a band over the head and a glowing cup on each ear.
+      if (role !== 'builder') rect(x - 3, y - 1 + bob, 6, 1, '#2b3340');
+      rect(x - 4, y + 1 + bob, 1, 4, '#2b3340');
+      rect(x + 3, y + 1 + bob, 1, 4, '#2b3340');
+      ctx.globalAlpha = reducedMotion ? 0.8 : 0.55 + 0.45 * Math.sin(t * 6.5 + phase);
+      rect(x - 5, y + 2 + bob, 1, 2, c.glow);
+      rect(x + 4, y + 2 + bob, 1, 2, c.glow);
+      ctx.globalAlpha = 1;
+    }
     // arms: forward while typing, down otherwise
     const armY = working ? y + 9 + bob + (Math.floor(t * 8) % 2) : y + 8;
     rect(x - 6, armY, 2, 4, c.body);
@@ -235,6 +285,7 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
     for (const p of particles) {
       ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
       if (p.check) glyph(CHECK, Math.round(p.x), Math.round(p.y), p.color);
+      else if (p.note) glyph(NOTE, Math.round(p.x), Math.round(p.y), p.color);
       else rect(p.x, p.y, 2, 2, p.color);
     }
     ctx.globalAlpha = 1;
@@ -280,5 +331,5 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
     timer = null;
   }
 
-  return { setScene, start, stop, step, render, agents };
+  return { setScene, setMusic, start, stop, step, render, agents };
 }

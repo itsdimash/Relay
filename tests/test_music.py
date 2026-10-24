@@ -16,7 +16,7 @@ class VendoredAdapterTests(unittest.TestCase):
     def test_build_script_compiles_signs_and_bundles_it(self):
         script = (ROOT / 'scripts' / 'build_macos_app.sh').read_text()
         for needle in ('third_party/mediaremote-adapter', 'MediaRemoteAdapter.framework', 'mediaremote-adapter.pl',
-                       'MediaRemoteAdapter-LICENSE.txt', 'packaging/RelayNowPlaying.m'):
+                       'MediaRemoteAdapter-LICENSE.txt', 'packaging/RelayNowPlaying.m', 'packaging/RelayNotchGlow.m'):
             self.assertIn(needle, script)
         # Every step of the adapter build must be able to fail without stopping the whole app build.
         body = script.split('build_now_playing_adapter() {', 1)[1].split('\n}\n', 1)[0]
@@ -123,6 +123,59 @@ class PanelShapeTests(unittest.TestCase):
         native = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()
         for message in set(re.findall(r"type: '(\w+)'", script)):
             self.assertIn('isEqualToString:@"%s"' % message, native, message)
+
+
+class AmbientLightTests(unittest.TestCase):
+    """The notch glows while agents work or music plays, even with the panel closed."""
+
+    def test_glow_window_never_takes_the_pointer_and_sits_under_the_panel(self):
+        glow = (ROOT / 'packaging' / 'RelayNotchGlow.m').read_text()
+        self.assertIn('ignoresMouseEvents = YES', glow)
+        # Only a non-activating panel stays over other apps, full-screen apps and every Space.
+        for needle in ('NSPanel', 'NSWindowStyleMaskNonactivatingPanel', 'NSWindowCollectionBehaviorCanJoinAllSpaces', 'NSWindowCollectionBehaviorFullScreenAuxiliary', 'canHide = NO', 'constrainFrameRect'):
+            self.assertIn(needle, glow)
+        self.assertIn('NSMainMenuWindowLevel + 1', glow)
+        self.assertIn('accessibilityDisplayShouldReduceMotion', glow)
+        panel = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()
+        self.assertIn('NSMainMenuWindowLevel + 2', panel)
+
+    def test_glow_is_only_lines_around_the_notch_with_a_burst(self):
+        glow = (ROOT / 'packaging' / 'RelayNotchGlow.m').read_text()
+        for needle in ('self.halo', 'self.outline', 'self.sparks', '- (void)burst', 'strokeStart'):
+            self.assertIn(needle, glow)
+        # No bars or dots hanging below the notch: only the lines that run around it.
+        for gone in ('self.bars', 'self.dots', 'transform.scale.y'):
+            self.assertNotIn(gone, glow)
+        header = (ROOT / 'packaging' / 'RelayNotchGlow.h').read_text()
+        for method in ('showMusicColor:', 'showAgentActor:', 'burst', 'hide'):
+            self.assertIn(method, header)
+        panel = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()
+        self.assertIn('[weakSelf.glow burst]', panel)  # a new track ripples the light
+
+    def test_panel_drives_the_glow_from_agents_and_music(self):
+        panel = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()
+        for needle in ('RelayNotchGlow', '/api/notch', 'refreshGlow', 'DominantColor', 'stopAmbient'):
+            self.assertIn(needle, panel)
+        # Agents at work win over music.
+        order = panel.split('- (void)refreshGlow', 1)[1]
+        self.assertLess(order.index('agentActor'), order.index('playing'))
+
+    def test_native_side_names_the_app_the_sound_comes_from(self):
+        native = (ROOT / 'packaging' / 'RelayNowPlaying.m').read_text()
+        for needle in ('appName', 'appIcon', 'parentApplicationBundleIdentifier', 'URLForApplicationWithBundleIdentifier'):
+            self.assertIn(needle, native)
+
+    def test_page_shows_the_source_and_uses_the_new_buttons(self):
+        html = (ROOT / 'static' / 'notch.html').read_text()
+        for element in ('id="musicSource"', 'id="musicApp"', 'id="musicAppIcon"', 'class="music-btn skip"', 'class="music-btn main"'):
+            self.assertIn(element, html)
+        script = (ROOT / 'static' / 'notch.js').read_text()
+        self.assertIn("startsWith('data:image/png')", script)  # only a plain PNG icon is ever used
+
+    def test_build_script_keeps_its_executable_bit(self):
+        import os
+        for name in ('build_macos_app.sh', 'make_dmg.sh', 'setup_macos_packaging.sh'):
+            self.assertTrue(os.access(ROOT / 'scripts' / name, os.X_OK), name)
 
 
 if __name__ == '__main__':

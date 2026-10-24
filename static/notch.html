@@ -72,8 +72,15 @@
         <svg class="cover-empty" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 15V5.2l8-1.7V13"/><circle cx="6" cy="15" r="2"/><circle cx="14" cy="13" r="2"/></svg>
       </div>
       <div class="player-main">
+        <div class="source" id="musicSource" hidden>
+          <img id="musicAppIcon" class="source-icon" alt="" width="14" height="14" hidden>
+          <span id="musicApp" class="source-name"></span>
+        </div>
         <div class="track">
-          <span id="musicTitle" class="music-title">Nothing is playing</span>
+          <div class="track-head">
+            <span id="musicTitle" class="music-title">Nothing is playing</span>
+            <div class="eq mini" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          </div>
           <span id="musicArtist" class="music-artist">Start music in any app and it shows up here.</span>
         </div>
         <div class="progress" id="progress">
@@ -82,12 +89,12 @@
           <span id="musicRemaining" class="time">-0:00</span>
         </div>
         <div class="music-controls">
-          <button type="button" class="music-btn" id="musicPrev" aria-label="Previous track"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3h1.7v10H3.5zM13 3v10L6.3 8z"/></svg></button>
-          <button type="button" class="music-btn big" id="musicToggle" aria-label="Pause">
-            <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h3v10H4zM9 3h3v10H9z"/></svg>
-            <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z"/></svg>
+          <button type="button" class="music-btn skip" id="musicPrev" aria-label="Previous track"><svg viewBox="0 0 28 20" aria-hidden="true"><path d="M13 3.2 3.6 10l9.4 6.8zM24.4 3.2 15 10l9.4 6.8z"/></svg></button>
+          <button type="button" class="music-btn main" id="musicToggle" aria-label="Pause">
+            <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="2.5" width="5.5" height="19" rx="2.2"/><rect x="14" y="2.5" width="5.5" height="19" rx="2.2"/></svg>
+            <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.6v16.8L20.5 12z"/></svg>
           </button>
-          <button type="button" class="music-btn" id="musicNext" aria-label="Next track"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 3h1.7v10h-1.7zM3 3l6.7 5L3 13z"/></svg></button>
+          <button type="button" class="music-btn skip" id="musicNext" aria-label="Next track"><svg viewBox="0 0 28 20" aria-hidden="true"><path d="M3.6 3.2 13 10l-9.4 6.8zM15 3.2 24.4 10 15 16.8z"/></svg></button>
         </div>
       </div>
     </section>

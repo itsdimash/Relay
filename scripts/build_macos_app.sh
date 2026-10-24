@@ -89,6 +89,7 @@ CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache" xcrun clang \
   "$PROJECT_ROOT/packaging/RelayNativeApp.m" \
   "$PROJECT_ROOT/packaging/RelayNotchPanel.m" \
   "$PROJECT_ROOT/packaging/RelayNowPlaying.m" \
+  "$PROJECT_ROOT/packaging/RelayNotchGlow.m" \
   -o "$CONTENTS/MacOS/Relay"
 
 if ! build_now_playing_adapter; then

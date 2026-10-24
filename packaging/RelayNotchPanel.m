@@ -1,5 +1,6 @@
 #import "RelayNotchPanel.h"
 #import "RelayNowPlaying.h"
+#import "RelayNotchGlow.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
 
@@ -87,6 +88,11 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 @property(nonatomic, strong) NSTimer *pillTimer;
 @property(nonatomic, copy) NSString *modeView; // the view the page was last asked to show
 @property(nonatomic) CFAbsoluteTime lastPillAt;
+@property(nonatomic, strong) RelayNotchGlow *glow;       // light around the closed notch
+@property(nonatomic, strong) NSTimer *agentTimer;       // asks the engine whether agents are working
+@property(nonatomic, copy) NSString *agentActor;        // nil when no task is running
+@property(nonatomic, strong) NSColor *musicColor;       // the colour of the cover that is playing
+@property(nonatomic, copy) NSString *musicColorSource;  // the artwork that colour came from
 @end
 
 @implementation RelayNotchPanel
@@ -101,8 +107,12 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         _nowPlaying = [[RelayNowPlaying alloc] init];
         __weak RelayNotchPanel *weakSelf = self;
         _nowPlaying.handler = ^(NSDictionary *state) { [weakSelf pushNowPlaying:state]; };
-        _nowPlaying.trackChangeHandler = ^(NSDictionary *state) { [weakSelf showTrackPill]; };
-        if (self.enabled) [_nowPlaying start];
+        _nowPlaying.trackChangeHandler = ^(NSDictionary *state) {
+            [weakSelf.glow burst];
+            [weakSelf showTrackPill];
+        };
+        _glow = [[RelayNotchGlow alloc] init];
+        if (self.enabled) [self startAmbient];
     }
     return self;
 }
@@ -120,15 +130,120 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 - (void)setEnabled:(BOOL)enabled {
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:RelayNotchEnabledKey];
     if (enabled) {
-        [self.nowPlaying start];
+        [self startAmbient];
     } else {
         [self hideAnimated:YES];
-        [self.nowPlaying stop];
+        [self stopAmbient];
+    }
+}
+
+#pragma mark - Light around the notch
+
+static NSColor *RGB(CGFloat r, CGFloat g, CGFloat b) { return [NSColor colorWithSRGBRed:r / 255 green:g / 255 blue:b / 255 alpha:1]; }
+
+// The colour of the cover: vivid pixels count most, and dark covers are lifted so the light is visible.
+static NSColor *DominantColor(NSString *dataURL) {
+    NSRange comma = [dataURL rangeOfString:@","];
+    if (comma.location == NSNotFound) return nil;
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:[dataURL substringFromIndex:comma.location + 1]
+                                                       options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    NSImage *image = data ? [[NSImage alloc] initWithData:data] : nil;
+    CGImageRef cg = image ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;
+    if (!cg) return nil;
+    uint8_t pixels[16 * 16 * 4] = {0};
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixels, 16, 16, 8, 16 * 4, space, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (!context) return nil;
+    CGContextDrawImage(context, CGRectMake(0, 0, 16, 16), cg);
+    CGContextRelease(context);
+    double r = 0, g = 0, b = 0, weight = 0;
+    for (int i = 0; i < 16 * 16 * 4; i += 4) {
+        double high = MAX(pixels[i], MAX(pixels[i + 1], pixels[i + 2]));
+        double low = MIN(pixels[i], MIN(pixels[i + 1], pixels[i + 2]));
+        double saturation = high > 0 ? (high - low) / high : 0;
+        double w = saturation * saturation * (high / 255) + 0.01;
+        r += pixels[i] * w;
+        g += pixels[i + 1] * w;
+        b += pixels[i + 2] * w;
+        weight += w;
+    }
+    r /= weight; g /= weight; b /= weight;
+    double top = MAX(r, MAX(g, b));
+    if (top <= 0) return nil;
+    double lift = top < 170 ? 170 / top : 1;
+    return RGB(MIN(255, r * lift), MIN(255, g * lift), MIN(255, b * lift));
+}
+
+- (void)startAmbient {
+    [self.nowPlaying start];
+    if (!self.agentTimer) {
+        __weak RelayNotchPanel *weakSelf = self;
+        NSTimer *timer = [NSTimer timerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *tick) { [weakSelf pollAgents]; }];
+        timer.tolerance = 0.5;
+        [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+        self.agentTimer = timer;
+    }
+    [self pollAgents];
+}
+
+- (void)stopAmbient {
+    [self.agentTimer invalidate];
+    self.agentTimer = nil;
+    self.agentActor = nil;
+    [self.nowPlaying stop];
+    [self.glow hide];
+}
+
+// Asks the local engine (the same feed the panel page uses) whether an agent is working right now.
+- (void)pollAgents {
+    NSURL *url = [NSURL URLWithString:@"/api/notch" relativeToURL:self.pageURL].absoluteURL;
+    if (!url) return;
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    request.timeoutInterval = 3;
+    request.cachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+    __weak RelayNotchPanel *weakSelf = self;
+    [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSString *actor = nil;
+        id parsed = (data && !error) ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSDictionary *run = [parsed isKindOfClass:NSDictionary.class] && [parsed[@"run"] isKindOfClass:NSDictionary.class] ? parsed[@"run"] : nil;
+        if (run && [run[@"running"] boolValue] && ![run[@"paused"] boolValue]) {
+            actor = [run[@"actor"] isKindOfClass:NSString.class] ? run[@"actor"] : @"relay";
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            RelayNotchPanel *strongSelf = weakSelf;
+            if (!strongSelf || !strongSelf.enabled) return;
+            if ((strongSelf.agentActor == nil && actor == nil) || [strongSelf.agentActor isEqualToString:actor]) return;
+            strongSelf.agentActor = actor;
+            [strongSelf refreshGlow];
+            if (actor) [strongSelf.glow burst]; // a new agent took over
+        });
+    }] resume];
+}
+
+// Agents at work come first (their colour), then music (the cover's colour). Nothing: no light.
+- (void)refreshGlow {
+    if (!self.enabled) {
+        [self.glow hide];
+        return;
+    }
+    if (self.agentActor) {
+        [self.glow showAgentActor:self.agentActor];
+    } else if ([self.nowPlaying.state[@"playing"] boolValue]) {
+        [self.glow showMusicColor:self.musicColor ?: RGB(79, 181, 148)];
+    } else {
+        [self.glow hide];
     }
 }
 
 // Sends what is playing to the panel page. nil clears the music strip.
 - (void)pushNowPlaying:(NSDictionary *)state {
+    NSString *artwork = [state[@"artwork"] isKindOfClass:NSString.class] ? state[@"artwork"] : nil;
+    if (![artwork isEqualToString:self.musicColorSource ?: @""]) {
+        self.musicColorSource = artwork;
+        self.musicColor = artwork ? DominantColor(artwork) : nil;
+    }
+    [self refreshGlow];
     NSString *script = @"if (!window.relayNowPlaying) return 'page has no handler yet';"
                         "window.relayNowPlaying(state);"
                         "return 'strip ' + (document.getElementById('panel').dataset.music ? 'shown' : 'hidden');";
@@ -159,6 +274,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     // The system shadow also draws a thin light rim along the top edge; the panel does not need either.
     window.hasShadow = NO;
     window.hidesOnDeactivate = NO;
+    window.canHide = NO; // the panel stays even if Relay is hidden with Command-H
     window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                                 NSWindowCollectionBehaviorStationary |

@@ -2,6 +2,21 @@ import { state as appState } from './state.js';
 import { $, e } from './dom.js';
 import { request } from './api.js';
 import { roleNames, defaultTeam, modeNames, providerLabel } from './constants.js';
+// Official logos are optional. If claude.svg / openai.svg (or .png) are in static/providers, the avatars show them
+// instead of the letters; if not, nothing changes.
+for (const [provider, file] of Object.entries({ claude: 'claude', codex: 'openai' })) {
+  const probe = extension => new Promise(resolve => {
+    const image = new Image();
+    image.onload = () => resolve(`/providers/${file}.${extension}`);
+    image.onerror = () => resolve(null);
+    image.src = `/providers/${file}.${extension}`;
+  });
+  probe('svg').then(url => url || probe('png')).then(url => {
+    if (!url) return;
+    document.documentElement.style.setProperty(`--logo-${provider}`, `url("${url}")`);
+    document.documentElement.setAttribute(`data-logo-${provider}`, '');
+  });
+}
 export function createTeams({
   updateButtons
 }) {

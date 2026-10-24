@@ -6,7 +6,8 @@
 @interface RelayNowPlaying : NSObject
 // Called on the main thread when the track or play state changes. nil means nothing is playing.
 // Keys: title, artist, album, app (bundle id), playing (BOOL), artwork (data: URL or NSNull),
-// elapsed and duration (seconds, or NSNull), rate (playback speed), updatedAt (when elapsed was true, ms since 1970).
+// elapsed and duration (seconds, or NSNull), rate (playback speed), updatedAt (when elapsed was true, ms since 1970),
+// appName and appIcon (a small PNG data: URL) of the app the sound comes from, when it can be found.
 @property(nonatomic, copy) void (^handler)(NSDictionary *state);
 // Called on the main thread, after handler, when a different track starts playing. The very first snapshot
 // after start does not count, so opening Relay while music plays is not a "change".

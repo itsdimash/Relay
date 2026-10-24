@@ -115,6 +115,14 @@ class Handler(BaseHTTPRequestHandler):
         files['/notch.js'] = ('notch.js', 'text/javascript; charset=utf-8')
         files['/fonts/geologica.woff2'] = ('fonts/geologica.woff2', 'font/woff2')
         files['/fonts/jetbrains-mono.woff2'] = ('fonts/jetbrains-mono.woff2', 'font/woff2')
+        if path.startswith('/providers/'):
+            # Optional official logos for the agent avatars: present only when the files were added to static/providers.
+            name = path[len('/providers/'):]
+            kinds = {'claude.svg': 'image/svg+xml', 'claude.png': 'image/png', 'openai.svg': 'image/svg+xml', 'openai.png': 'image/png'}
+            logo = self.app.ROOT / 'static' / 'providers' / name
+            if name in kinds and logo.is_file():
+                return self.respond(logo.read_bytes(), content_type=kinds[name])
+            return self.respond({'error': 'Not found'}, 404)
         if path in files:
             name, mime = files[path]
             return self.respond((self.app.ROOT / 'static' / name).read_bytes(), content_type=mime)

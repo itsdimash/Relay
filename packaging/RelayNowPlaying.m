@@ -14,6 +14,7 @@ static const NSInteger MaxFailures = 6;                        // consecutive fa
 @property(nonatomic) NSInteger generation; // ignores callbacks from a stream that was already stopped
 @property(nonatomic) BOOL primed;            // the first snapshot of this stream has been seen
 @property(nonatomic, copy) NSString *lastTrackKey;
+@property(nonatomic, strong) NSMutableDictionary *appCache; // bundle id -> @{appName, appIcon}
 @end
 
 // A number from the adapter that is usable as a time in seconds, or nil.
@@ -227,7 +228,7 @@ static double TimestampMilliseconds(id value) {
         RelayNowPlaying *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.generation != generation) return;
         strongSelf.failures = 0; // it is working
-        [strongSelf publish:state];
+        [strongSelf publish:[strongSelf stateByAddingAppInfo:state]];
         strongSelf.primed = YES;
     });
 }
@@ -245,6 +246,9 @@ static double TimestampMilliseconds(id value) {
     NSString *artist = [payload[@"artist"] isKindOfClass:NSString.class] ? payload[@"artist"] : @"";
     NSString *album = [payload[@"album"] isKindOfClass:NSString.class] ? payload[@"album"] : @"";
     NSString *app = [payload[@"bundleIdentifier"] isKindOfClass:NSString.class] ? payload[@"bundleIdentifier"] : @"";
+    // A browser tab or web view reports a helper process; the parent is the app the person knows.
+    NSString *parent = [payload[@"parentApplicationBundleIdentifier"] isKindOfClass:NSString.class] ? payload[@"parentApplicationBundleIdentifier"] : @"";
+    if (parent.length > 0) app = parent;
     BOOL playing = [payload[@"playing"] respondsToSelector:@selector(boolValue)] && [payload[@"playing"] boolValue];
 
     // Artwork becomes a data: URL, but only for plain image types and a sensible size.
@@ -276,6 +280,44 @@ static double TimestampMilliseconds(id value) {
     BOOL changed = ![key isEqualToString:self.lastTrackKey ?: @""];
     self.lastTrackKey = key;
     if (changed && self.primed && [next[@"playing"] boolValue] && self.trackChangeHandler) self.trackChangeHandler(next);
+}
+
+#pragma mark - The app the sound comes from
+
+// Adds the app's name and icon, looked up once per app. Runs on the main thread.
+- (NSDictionary *)stateByAddingAppInfo:(NSDictionary *)state {
+    NSString *bundle = [state[@"app"] isKindOfClass:NSString.class] ? state[@"app"] : @"";
+    if (!state || bundle.length == 0) return state;
+    if (!self.appCache) self.appCache = [NSMutableDictionary dictionary];
+    NSDictionary *info = self.appCache[bundle];
+    if (!info) {
+        NSMutableDictionary *found = [NSMutableDictionary dictionary];
+        NSURL *url = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:bundle];
+        if (url) {
+            NSString *name = [NSFileManager.defaultManager displayNameAtPath:url.path];
+            if ([name hasSuffix:@".app"]) name = [name substringToIndex:name.length - 4];
+            if (name.length > 0) found[@"appName"] = name;
+            NSImage *icon = [NSWorkspace.sharedWorkspace iconForFile:url.path];
+            NSImage *small = [NSImage imageWithSize:NSMakeSize(64, 64) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+                [icon drawInRect:rect];
+                return YES;
+            }];
+            CGImageRef image = [small CGImageForProposedRect:NULL context:nil hints:nil];
+            if (image) {
+                NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:image];
+                NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+                if (png.length > 0 && png.length < 200 * 1024) {
+                    found[@"appIcon"] = [NSString stringWithFormat:@"data:image/png;base64,%@", [png base64EncodedStringWithOptions:0]];
+                }
+            }
+        }
+        info = found;
+        self.appCache[bundle] = info;
+    }
+    if (info.count == 0) return state;
+    NSMutableDictionary *merged = [state mutableCopy];
+    [merged addEntriesFromDictionary:info];
+    return merged;
 }
 
 #pragma mark - Commands

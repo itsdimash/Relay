@@ -202,3 +202,7 @@ label { font-weight: 600; font-size: 14px; color: var(--ink); }
 @media (prefers-reduced-motion: reduce) {
   .title-row, .compose, .workflow, .agent-card, .connection-dot { animation: none !important; }
 }
+
+/* Provider logos replace the letters in the avatars once the files exist (see teams.js) */
+[data-logo-claude] .avatar.claude { font-size: 0; color: transparent; background: var(--logo-claude) center / 100% no-repeat #d77655; }
+[data-logo-codex] .avatar.codex { font-size: 0; color: transparent; background: var(--logo-codex) center / 62% no-repeat #eef2f0; }
