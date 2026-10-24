@@ -47,8 +47,8 @@ Relay coordinates the coding agents you already have installed. Give it a task, 
 
 **You need:** an Apple silicon Mac on macOS 13 or newer, plus [Claude Code](https://code.claude.com), Codex CLI, or both, installed and signed in. [Git](https://git-scm.com) is required for build tasks.
 
-1. **Download** [`Relay-macOS-arm64.zip`](https://github.com/itsdimash/Relay/raw/main/dist/Relay-macOS-arm64.zip) (about 8 MB).
-2. **Unzip it** and drag **Relay.app** into your **Applications** folder.
+1. **Download** `Relay-macOS-arm64.dmg` from the [latest release](https://github.com/itsdimash/Relay/releases/latest).
+2. **Open the disk image** and drag **Relay** onto the **Applications** shortcut. (If you open Relay from Downloads instead, it offers to move itself to Applications.)
 3. **Open it the first time through System Settings.** Relay is not yet signed with an Apple Developer ID or notarized, so macOS blocks the first launch.
    - Double-click **Relay**. When macOS warns about it, click **Done** (do not move it to the Trash).
    - Open **System Settings → Privacy & Security** and scroll to the bottom.
@@ -63,11 +63,15 @@ Relay coordinates the coding agents you already have installed. Give it a task, 
    codex login
    ```
 
-Relay opens as a native window with its own project picker, task composer, conversation history, plan approval, clarification, and handoff controls. It does not open or embed a website.
+Relay opens in its own macOS window with the project picker, task composer, conversation history, plan approval, clarification, and handoff controls. Everything runs on your Mac. Click any role in **Your team** to choose its tool, model, and effort.
 
 History and settings for the packaged app live in `~/Library/Application Support/Relay`.
 
-> The download link always serves the latest build on the `main` branch. Prefer to build the app yourself? See [Releasing Relay](docs/RELEASING.md).
+> A `.zip` of the same app is attached to each release too. Prefer to build the app yourself? See [Releasing Relay](docs/RELEASING.md).
+
+### Updates
+
+The app checks this repository's latest GitHub Release when it opens. When a newer version exists, a banner offers **Update now**: Relay downloads the new app, verifies its checksum, replaces itself in Applications, and reopens. Pushing code to GitHub does not update installed apps; publishing a release (a `v*` tag) does. Relay must be in Applications, and it will not update while a task is running.
 
 ### Connect your own accounts
 
@@ -406,12 +410,12 @@ This produces an ad-hoc-signed Apple-silicon build for local testing. See [Relea
 server.py                  CLI launcher; composes and starts the backend
 dev.py                     Development reload supervisor
 relay/                     Backend modules and application composition
-static/                    Web interface: HTML, styles, report renderers, icons
+static/                    Dashboard: HTML, styles (brand.css), fonts, report renderers, icons
 static/app.js              Frontend startup and feature wiring
 static/js/                 Notifications, history, projects, teams, attachments, tasks, and shared helpers
-packaging/                 Native macOS app shell (Info.plist, RelayNativeApp.m)
-scripts/                   macOS app build and icon scripts
-dist/                      Packaged app download (Relay-macOS-arm64.zip)
+packaging/                 Native macOS app shell: window, engine launcher, Info.plist, entitlements
+scripts/                   macOS app build, disk image (make_dmg.sh) and icon scripts
+dist/                      Packaged app output (Relay-macOS-arm64.zip)
 tests/                     Workflow, HTTP, development, distribution, and rendering tests
 docs/ARCHITECTURE.md       Architecture and implementation details
 docs/RELEASING.md          Building, signing, and publishing the macOS app
@@ -428,6 +432,7 @@ See [Architecture](docs/ARCHITECTURE.md) for implementation details and [Contrib
 | Problem | What to do |
 | --- | --- |
 | macOS says Relay "can't be opened" or "can't be verified" | Relay is not notarized yet. Click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** next to the Relay message. |
+| Relay asks to move itself to Applications | Choose **Move to Applications**. It copies itself, then reopens from there. Choose **Don't ask again** to skip it. |
 | Relay does not run on my Mac | The packaged app needs an Apple silicon Mac on macOS 13 or newer. On Intel Macs, [run from source](#run-from-source). |
 | Agent needs sign-in | Run the relevant login command in Terminal, then choose **Refresh connections**. |
 | Relay cannot find `claude` or `codex` | Set `RELAY_CLAUDE` or `RELAY_CODEX` to the absolute path. When launching the packaged app from Finder, make sure the CLI is installed in a standard location. |

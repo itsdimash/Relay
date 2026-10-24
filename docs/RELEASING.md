@@ -9,6 +9,7 @@ From the repository root:
 ```sh
 scripts/setup_macos_packaging.sh
 scripts/build_macos_app.sh
+scripts/make_dmg.sh      # optional: the drag-to-Applications disk image
 open dist/Relay.app
 ```
 
@@ -41,6 +42,8 @@ git push origin v0.1.0
 
 The `macOS release` workflow tests the project, builds and signs the app, submits it to Apple's notarization service when credentials are configured, staples the approval ticket, and publishes the ZIP. `workflow_dispatch` can be used to produce a downloadable test artifact without creating a GitHub Release.
 
-Each release also attaches `Relay-macOS-arm64.zip.sha256`. Without the Apple secrets above, the workflow still publishes an ad-hoc-signed build and says in the release notes that it is not notarized.
+Each release attaches `Relay-macOS-arm64.dmg` (the recommended download), `Relay-macOS-arm64.zip`, and a `.sha256` checksum for each. Without the Apple secrets above, the workflow still publishes an ad-hoc-signed build and says in the release notes that it is not notarized.
 
-Once a release exists, the stable download link is `https://github.com/itsdimash/Relay/releases/latest/download/Relay-macOS-arm64.zip`.
+Once a release exists, the stable download link is `https://github.com/itsdimash/Relay/releases/latest/download/Relay-macOS-arm64.dmg`.
+
+Installed copies of Relay check the latest release on launch and offer an in-app update. That update uses `Relay-macOS-arm64.zip` and its `.sha256`, so keep both attached to every release; a release without them is ignored.

@@ -6,6 +6,7 @@ import threading
 from . import attachments, git_ops, history, lifecycle, providers, recovery, registry, reports
 from . import contracts
 from .http import Handler
+from .updater import Updater, RESTART_STATUS
 from .workflow import Run
 
 
@@ -25,6 +26,7 @@ class Application:
         self.RUNS = {}
         self.ACTIVE = None
         self.SHUTTING_DOWN = threading.Event()
+        self.updater = Updater()
 
         class TaskRun(Run):
             app = self
@@ -34,6 +36,12 @@ class Application:
 
         self.Run = TaskRun
         self.Handler = RequestHandler
+
+    @staticmethod
+    def quit_for_update():
+        """Exit shortly after the HTTP response is sent; the native app sees RESTART_STATUS and quits too."""
+        import os
+        threading.Timer(0.8, lambda: os._exit(RESTART_STATUS)).start()
 
     DEFAULT_TEAM = contracts.DEFAULT_TEAM
     IMAGE_TYPES = contracts.IMAGE_TYPES

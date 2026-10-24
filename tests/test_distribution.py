@@ -35,6 +35,22 @@ class DistributionTests(unittest.TestCase):
             _, data = server.application_paths(frozen=True, bundle_root=folder, environment={'RELAY_DATA_DIR': str(expected)})
             self.assertEqual(data, expected.resolve())
 
+    def test_dashboard_brand_assets_are_served(self):
+        http = (ROOT / 'relay' / 'http.py').read_text()
+        index = (ROOT / 'static' / 'index.html').read_text()
+        for route, path in [('/brand.css', 'brand.css'), ('/fonts/geologica.woff2', 'fonts/geologica.woff2'),
+                            ('/fonts/jetbrains-mono.woff2', 'fonts/jetbrains-mono.woff2')]:
+            self.assertIn(route, http)
+            self.assertTrue((ROOT / 'static' / path).is_file(), path)
+        self.assertIn('/brand.css', index)
+
+    def test_packaging_files_exist_for_the_native_shell(self):
+        for name in ['packaging/RelayNativeApp.m', 'packaging/Info.plist', 'packaging/Relay.entitlements',
+                     'scripts/make_dmg.sh', 'scripts/build_macos_app.sh']:
+            self.assertTrue((ROOT / name).is_file(), name)
+        build = (ROOT / 'scripts' / 'build_macos_app.sh').read_text()
+        self.assertIn('-framework WebKit', build)
+
 
 if __name__ == '__main__':
     unittest.main()

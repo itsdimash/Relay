@@ -38,6 +38,7 @@ CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache" xcrun clang \
   -arch arm64 \
   -mmacosx-version-min=13.0 \
   -framework Cocoa \
+  -framework WebKit \
   "$PROJECT_ROOT/packaging/RelayNativeApp.m" \
   -o "$CONTENTS/MacOS/Relay"
 
@@ -56,7 +57,7 @@ if [[ "$SIGNING_IDENTITY" == "-" ]]; then
   codesign --force --sign - "$CONTENTS/Resources/RelayServer"
   codesign --force --sign - "$APP"
 else
-  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$CONTENTS/Resources/RelayServer"
+  codesign --force --options runtime --timestamp --entitlements "$PROJECT_ROOT/packaging/Relay.entitlements" --sign "$SIGNING_IDENTITY" "$CONTENTS/Resources/RelayServer"
   codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
 fi
 

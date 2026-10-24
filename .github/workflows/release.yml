@@ -15,6 +15,8 @@ jobs:
       # Secrets cannot be tested directly in `if:`, so expose whether they exist.
       HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
       HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+      # Developer ID identity when the certificate secrets exist, otherwise ad-hoc ("-").
+      CODESIGN_IDENTITY: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,9 +54,10 @@ jobs:
           rm -f "$RUNNER_TEMP/certificate.p12"
 
       - name: Build Relay.app
-        env:
-          CODESIGN_IDENTITY: ${{ env.HAS_SIGNING == 'true' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
         run: scripts/build_macos_app.sh
+
+      - name: Build disk image
+        run: scripts/make_dmg.sh
 
       - name: Notarize and staple
         if: env.HAS_SIGNING == 'true' && env.HAS_NOTARIZATION == 'true'
@@ -70,16 +73,24 @@ jobs:
           # Re-zip so the download contains the stapled ticket.
           rm dist/Relay-macOS-arm64.zip
           ditto -c -k --sequesterRsrc --keepParent dist/Relay.app dist/Relay-macOS-arm64.zip
+          # Rebuild the disk image from the stapled app, then notarize and staple it too.
+          scripts/make_dmg.sh
+          xcrun notarytool submit dist/Relay-macOS-arm64.dmg \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple dist/Relay-macOS-arm64.dmg
 
       - name: Checksum
         run: |
           cd dist
+          shasum -a 256 Relay-macOS-arm64.dmg | tee Relay-macOS-arm64.dmg.sha256
           shasum -a 256 Relay-macOS-arm64.zip | tee Relay-macOS-arm64.zip.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: Relay-macOS-arm64
           path: |
+            dist/Relay-macOS-arm64.dmg
+            dist/Relay-macOS-arm64.dmg.sha256
             dist/Relay-macOS-arm64.zip
             dist/Relay-macOS-arm64.zip.sha256
 
@@ -88,9 +99,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/Relay-macOS-arm64.dmg
+            dist/Relay-macOS-arm64.dmg.sha256
             dist/Relay-macOS-arm64.zip
             dist/Relay-macOS-arm64.zip.sha256
           generate_release_notes: true
           body: |
-            **Relay for Apple silicon Macs (macOS 13 or newer).**
+            **Relay for Apple silicon Macs (macOS 13 or newer).** Open the .dmg and drag Relay onto Applications.
             ${{ env.HAS_NOTARIZATION == 'true' && 'Signed and notarized by Apple.' || 'This build is not notarized yet. On first launch, open System Settings → Privacy & Security and click Open Anyway.' }}
