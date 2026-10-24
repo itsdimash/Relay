@@ -88,7 +88,7 @@ Move the pointer to the notch and a small dark panel grows out of it, with icon 
 
 ### Provider logos
 
-The agent avatars show "Cl" and "Cx" by default. To show the Claude and OpenAI (Codex) logos instead, add the official files from each company's brand page to `static/providers/` as `claude.svg` and `openai.svg` (`.png` also works) and follow their usage guidelines. Nothing else is needed; without the files nothing changes. See `static/providers/README.md`.
+The Claude and OpenAI (Codex) logos appear in the agent avatars on the Team cards and in the activity feed. They are the files `static/providers/claude.png` and `static/providers/openai.png`. To replace them, put `claude.svg` / `openai.svg` (or new `.png` files) in the same folder; an SVG takes priority over a PNG. If a file is missing, the avatar falls back to the letters "Cl" or "Cx". See `static/providers/README.md`.
 
 ### Connect your own accounts
 
