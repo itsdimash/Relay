@@ -5,7 +5,7 @@
   <p>A local workspace for Claude Code and Codex to inspect, plan, build, and review software together.</p>
 </div>
 
-Relay coordinates your installed coding agents through a browser dashboard. Give them a task, attach a screenshot, choose their responsibilities, and review their proposed plan before implementation starts.
+Relay is a native macOS workspace for coordinating your installed coding agents. Give them a task, choose their responsibilities, approve the proposed plan, and follow the implementation and review handoffs in one desktop window.
 
 Use it for frontend work, backend changes, project observations, or implementation planning. Relay runs on your computer and uses your existing command-line tool sign-ins.
 
@@ -41,6 +41,16 @@ The backend uses Python's standard library. **No `pip install` or `npm install` 
 The default team uses Claude as Observer and Reviewer, and Codex as Builder. You can assign the same provider to all three roles. Only the providers needed by the selected task mode must be ready.
 
 ## Quick start
+
+### Download the macOS app
+
+Download `Relay-macOS-arm64.zip` from the repository's GitHub Releases page, unzip it, and move **Relay.app** to Applications. Relay opens as a native macOS workspace with its own window, project picker, task composer, conversation history, plan approval, clarification, and handoff controls. It does not open or embed a website.
+
+The current packaged build is for Apple silicon Macs. Until a release is signed and notarized with an Apple Developer ID, macOS may require you to Control-click Relay and choose **Open** the first time.
+
+Relay keeps packaged-app history and settings in `~/Library/Application Support/Relay`. It continues to use your existing Claude Code and Codex installations and sign-ins.
+
+### Run from source
 
 Download or clone this repository, then open a terminal **inside the Relay folder**.
 

@@ -11,9 +11,20 @@ from .contracts import PROVIDERS, ROLES, SCHEMA
 def executable(name):
     candidates = [os.environ.get('RELAY_' + name.upper()), shutil.which(name)]
     if name == 'codex':
-        candidates += ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex', '/Applications/Codex.app/Contents/Resources/codex']
+        candidates += [
+            '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+            '/Applications/Codex.app/Contents/Resources/codex',
+            '/opt/homebrew/bin/codex',
+            '/usr/local/bin/codex',
+            str(Path.home() / '.local/bin/codex'),
+        ]
     else:
-        candidates += [str(Path.home() / '.local/bin/claude')]
+        candidates += [
+            '/opt/homebrew/bin/claude',
+            '/usr/local/bin/claude',
+            str(Path.home() / '.local/bin/claude'),
+            str(Path.home() / '.claude/local/claude'),
+        ]
     return next((p for p in candidates if p and Path(p).is_file() and os.access(p, os.X_OK)), None)
 
 
