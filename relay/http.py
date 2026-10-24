@@ -10,6 +10,8 @@ from . import notch
 
 class Handler(BaseHTTPRequestHandler):
     """HTTP adapter; app is bound by Application, never stored in module globals."""
+    # Browsers open idle connections ahead of time; do not let one keep a thread (and shutdown) waiting forever.
+    timeout = 30
 
     def log_message(self, *_):
         pass

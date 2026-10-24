@@ -74,6 +74,9 @@ def main(app):
     try:
         app.load_runs()
         server = ThreadingHTTPServer(('127.0.0.1', args.port), app.Handler)
+        # Closing the server must never wait for a request thread; a stuck connection once kept the engine alive after quit.
+        server.daemon_threads = True
+        server.block_on_close = False
     except OSError as error:
         instance_lock.close()
         parser.exit(1, f'Could not start Relay: {error}\n')
