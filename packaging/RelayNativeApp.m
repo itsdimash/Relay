@@ -206,6 +206,13 @@ static NSColor *RelayColor(unsigned int rgb) {
     process.standardOutput = output;
     process.standardError = errors;
     process.currentDirectoryURL = resourceURL;
+    // Tell the engine which app it belongs to so it can offer in-app updates.
+    NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    if (version.length) environment[@"RELAY_APP_VERSION"] = version;
+    environment[@"RELAY_APP_PATH"] = NSBundle.mainBundle.bundlePath;
+    environment[@"RELAY_APP_PID"] = [NSString stringWithFormat:@"%d", NSProcessInfo.processInfo.processIdentifier];
+    process.environment = environment;
     __weak RelayAppDelegate *weakSelf = self;
     output.fileHandleForReading.readabilityHandler = ^(NSFileHandle *handle) {
         NSData *data = handle.availableData;
@@ -251,6 +258,8 @@ static NSColor *RelayColor(unsigned int rgb) {
     if (task != self.server) return;
     self.server = nil;
     if (self.quitting) { self.mayTerminate = YES; [NSApp terminate:nil]; return; }
+    // Exit status 75: the engine finished downloading an update and asked the app to quit so it can be replaced.
+    if (task.terminationStatus == 75) { self.mayTerminate = YES; [NSApp terminate:nil]; return; }
     NSString *details = [self.errorBuffer stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     // Preferred port taken by another program: try again on any free port.
     if (!self.ready && self.triedPreferredPort && [details containsString:@"Could not start Relay"]) {

@@ -10,6 +10,8 @@ import { createHistory } from './js/history.js';
 import { createConversation } from './js/conversation.js';
 import { createFindings } from './js/findings.js';
 import { createTasks } from './js/tasks.js';
+import { createUpdates } from './js/updates.js';
+const updates = createUpdates();
 const notifications = createNotifications();
 const recovery = createRecovery({ render: () => conversation.render() });
 const clarification = createClarification({ render: () => conversation.render() });
@@ -50,7 +52,7 @@ const tasks = createTasks({
   updateSourceBrief: () => findings.updateSourceBrief(),
   render: () => conversation.render()
 });
-for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks]) feature.init();
+for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates]) feature.init();
 try {
   const draft = JSON.parse(sessionStorage.getItem('relay.devDraft') || 'null');
   if (draft) {

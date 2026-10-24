@@ -73,6 +73,8 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError,OSError):return self.respond({'error':'Image not found.'},404)
         if path == '/api/models':
             return self.respond(self.app.model_catalog())
+        if path == '/api/update':
+            return self.respond(self.app.updater.public())
         if path == '/api/teams':
             try:
                 return self.respond(self.app.team_presets())
@@ -86,7 +88,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'teams')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'teams', 'updates')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -132,6 +134,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'ok': True})
             if path == '/api/folders':
                 return self.respond(self.app.folder_choices(payload.get('path')))
+            if path == '/api/update/install':
+                if self.app.ACTIVE and not self.app.ACTIVE.finished.is_set():
+                    raise ValueError('Finish or stop the running task before updating.')
+                self.app.updater.install(self.app.quit_for_update)
+                return self.respond({'ok': True, 'restarting': True})
             if path in ('/api/run', '/api/followup'):
                 task = str(payload.get('task', '')).strip()
                 demo = payload.get('demo') is True
