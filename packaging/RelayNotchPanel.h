@@ -17,4 +17,6 @@ extern NSString *const RelayNotchEnabledKey;
 - (instancetype)initWithPageURL:(NSURL *)pageURL;
 // Slides the panel down now and keeps it until the pointer has been over it and left.
 - (void)showPinned;
+// Opens the panel and keeps it until toggled again, or closes it. Double-tapping the right Command key does this.
+- (void)toggle;
 @end

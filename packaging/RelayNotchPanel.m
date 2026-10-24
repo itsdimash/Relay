@@ -12,6 +12,10 @@ static const CGFloat TriggerDepth = 3;        // how close to the very top edge 
 static const NSTimeInterval ShowDelay = 0.15; // the pointer must rest in the hot zone this long
 static const NSTimeInterval HideDelay = 0.45; // grace period after the pointer leaves the panel
 static const NSTimeInterval DoneVisibleSeconds = 7.0;
+static const NSTimeInterval TapMaxHold = 0.30;    // a Command "tap" is pressed and released within this time
+static const NSTimeInterval DoubleTapWindow = 0.45; // two taps within this time toggle the panel
+static const CGEventFlags RightCommandMask = 0x00000010; // device-dependent bit for the right Command key
+static const CGEventFlags LeftCommandMask = 0x00000008;
 
 // A borderless panel that can take clicks and keys without making Relay the active app.
 @interface RelayNotchWindow : NSPanel
@@ -55,6 +59,11 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 @property(nonatomic) BOOL hovered;  // the pointer has been over the panel since it appeared
 @property(nonatomic, strong) NSTimer *frameTimer;
 @property(nonatomic, strong) NSScreen *screen;
+@property(nonatomic) BOOL sticky;   // opened with the keyboard: stays until toggled again
+@property(nonatomic) BOOL commandDown;
+@property(nonatomic) BOOL commandTapValid;
+@property(nonatomic) CFAbsoluteTime commandPressedAt;
+@property(nonatomic) CFAbsoluteTime lastTapAt;
 @property(nonatomic) CGFloat progress; // 0: the size of the notch, 1: fully open
 @end
 
@@ -66,7 +75,7 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
         [NSUserDefaults.standardUserDefaults registerDefaults:@{RelayNotchEnabledKey: @YES}];
         _pageURL = pageURL;
         [self buildWindow];
-        if (self.enabled) [self installMonitors];
+        [self installMonitors];
     }
     return self;
 }
@@ -83,12 +92,7 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 
 - (void)setEnabled:(BOOL)enabled {
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:RelayNotchEnabledKey];
-    if (enabled) {
-        [self installMonitors];
-    } else {
-        [self removeMonitors];
-        [self hideAnimated:NO];
-    }
+    if (!enabled) [self hideAnimated:YES];
 }
 
 #pragma mark - Window
@@ -238,6 +242,7 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     [self cancelTimer:&_hideTimer];
     [self cancelTimer:&_doneTimer];
     self.pinned = NO;
+    self.sticky = NO;
     self.hovered = NO;
     if (!self.shown) return;
     self.shown = NO;
@@ -247,6 +252,17 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
         RelayNotchPanel *strongSelf = weakSelf;
         if (strongSelf && !strongSelf.shown) [strongSelf.window orderOut:nil];
     }];
+}
+
+- (void)toggle {
+    if (self.shown) {
+        [self hideAnimated:YES];
+        return;
+    }
+    [self cancelTimer:&_doneTimer];
+    self.pinned = YES;
+    self.sticky = YES;
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation]];
 }
 
 - (void)showPinned {
@@ -271,15 +287,15 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 
 #pragma mark - Pointer tracking
 
-// The pointer position is read about 25 times a second. This works in every app and Space,
+// The pointer and modifier keys are read 40 times a second. This works in every app and Space,
 // needs no special permission, and also catches the very top pixel row that event monitors can miss.
 - (void)installMonitors {
     if (self.pollTimer) return;
     __weak RelayNotchPanel *weakSelf = self;
-    NSTimer *timer = [NSTimer timerWithTimeInterval:0.04 repeats:YES block:^(NSTimer *tick) {
+    NSTimer *timer = [NSTimer timerWithTimeInterval:0.025 repeats:YES block:^(NSTimer *tick) {
         [weakSelf pointerMoved];
     }];
-    timer.tolerance = 0.02;
+    timer.tolerance = 0.005;
     [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
     self.pollTimer = timer;
 }
@@ -303,7 +319,48 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     return point.y >= NSMaxY(area) - TriggerDepth && fabs(point.x - NSMidX(area)) <= half;
 }
 
+// Double-tap the right Command key to open or close the panel. The key state is read directly,
+// so this works in every app without asking for Input Monitoring or Accessibility access.
+- (void)checkCommandTaps {
+    CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
+    CGEventFlags others = kCGEventFlagMaskShift | kCGEventFlagMaskControl | kCGEventFlagMaskAlternate;
+    BOOL rightDown = (flags & RightCommandMask) != 0;
+    BOOL clean = rightDown && !(flags & LeftCommandMask) && !(flags & others);
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+
+    if (rightDown && !self.commandDown) {
+        self.commandDown = YES;
+        self.commandPressedAt = now;
+        self.commandTapValid = clean;
+        return;
+    }
+    if (rightDown) {
+        if (!clean) self.commandTapValid = NO;
+        return;
+    }
+    if (!self.commandDown) return;
+
+    // Released.
+    self.commandDown = NO;
+    CFTimeInterval held = now - self.commandPressedAt;
+    // Command with a key or a click (for example Command-C) is a shortcut, not a tap.
+    CFTimeInterval sinceKey = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGEventKeyDown);
+    CFTimeInterval sinceClick = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGEventLeftMouseDown);
+    BOOL usedWithOtherInput = sinceKey < held + 0.05 || sinceClick < held + 0.05;
+    if (!self.commandTapValid || held > TapMaxHold || usedWithOtherInput) {
+        self.lastTapAt = 0;
+        return;
+    }
+    if (self.lastTapAt > 0 && now - self.lastTapAt <= DoubleTapWindow) {
+        self.lastTapAt = 0;
+        [self toggle];
+    } else {
+        self.lastTapAt = now;
+    }
+}
+
 - (void)pointerMoved {
+    [self checkCommandTaps];
     if (!self.enabled) return;
     if (self.shown) {
         if ([self pointerIsNearPanel]) {
@@ -311,6 +368,8 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
             [self cancelTimer:&_hideTimer];
             return;
         }
+        // Opened with the keyboard: it stays until the same shortcut, Escape, or Open Relay.
+        if (self.sticky) return;
         // Opened because something needs the person: wait until they have looked at it.
         if (self.pinned && !self.hovered) return;
         [self scheduleHide];

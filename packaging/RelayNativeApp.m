@@ -88,8 +88,7 @@ static NSColor *RelayColor(unsigned int rgb) {
     NSMenuItem *fullScreen = [viewMenu addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fullScreen.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *showNotch = [viewMenu addItemWithTitle:@"Show Notch Panel" action:@selector(showNotchPanel:) keyEquivalent:@"n"];
-    showNotch.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    NSMenuItem *showNotch = [viewMenu addItemWithTitle:@"Show or Hide Notch Panel (double-tap right ⌘)" action:@selector(showNotchPanel:) keyEquivalent:@""];
     showNotch.target = self;
     NSMenuItem *toggleNotch = [viewMenu addItemWithTitle:@"Open Notch Panel from Screen Top" action:@selector(toggleNotchPanel:) keyEquivalent:@""];
     toggleNotch.target = self;
@@ -112,8 +111,7 @@ static NSColor *RelayColor(unsigned int rgb) {
 }
 
 - (void)showNotchPanel:(id)sender {
-    if (!self.notch.enabled) self.notch.enabled = YES;
-    [self.notch showPinned];
+    [self.notch toggle];
 }
 
 - (void)toggleNotchPanel:(id)sender {
