@@ -4,6 +4,7 @@ import hashlib
 import os
 import signal
 import threading
+import time
 import webbrowser
 from http.server import ThreadingHTTPServer
 
@@ -37,6 +38,28 @@ def acquire_instance_lock(app):
     return handle
 
 
+def process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def stop_when_app_exits(app, pid, interval=2.0):
+    """The macOS app starts this engine. If the app is killed or crashes, stop too, so no engine is left holding the data folder."""
+    def watch():
+        while not app.SHUTTING_DOWN.wait(interval):
+            if not process_alive(pid):
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+    thread = threading.Thread(target=watch, name='app-watcher', daemon=True)
+    thread.start()
+    return thread
+
+
 def main(app):
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=8765)
@@ -51,6 +74,9 @@ def main(app):
     try:
         app.load_runs()
         server = ThreadingHTTPServer(('127.0.0.1', args.port), app.Handler)
+        # Closing the server must never wait for a request thread; a stuck connection once kept the engine alive after quit.
+        server.daemon_threads = True
+        server.block_on_close = False
     except OSError as error:
         instance_lock.close()
         parser.exit(1, f'Could not start Relay: {error}\n')
@@ -63,6 +89,9 @@ def main(app):
             app.SHUTTING_DOWN.set()
             raise KeyboardInterrupt
     previous_handlers = {sig: signal.signal(sig, handle_shutdown) for sig in (signal.SIGINT, signal.SIGTERM)}
+    app_pid = os.environ.get('RELAY_APP_PID', '')
+    if app_pid.isdigit() and int(app_pid) > 1:
+        stop_when_app_exits(app, int(app_pid))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -5,10 +5,13 @@ import threading
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from .contracts import TERMINAL
+from . import notch
 
 
 class Handler(BaseHTTPRequestHandler):
     """HTTP adapter; app is bound by Application, never stored in module globals."""
+    # Browsers open idle connections ahead of time; do not let one keep a thread (and shutdown) waiting forever.
+    timeout = 30
 
     def log_message(self, *_):
         pass
@@ -73,6 +76,12 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError,OSError):return self.respond({'error':'Image not found.'},404)
         if path == '/api/models':
             return self.respond(self.app.model_catalog())
+        if path == '/api/notch':
+            with self.app.LOCK:
+                infos = [run.info if isinstance(run, self.app.Run) else run for run in self.app.RUNS.values()]
+                data = notch.snapshot(infos)
+            data['token'] = self.app.TOKEN
+            return self.respond(data)
         if path == '/api/update':
             return self.respond(self.app.updater.public())
         if path == '/api/teams':
@@ -88,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'teams', 'updates')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'teams', 'updates', 'notch-room')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -96,6 +105,9 @@ class Handler(BaseHTTPRequestHandler):
         files['/workspace.css'] = ('workspace.css', 'text/css; charset=utf-8')
         files['/motion.css'] = ('motion.css', 'text/css; charset=utf-8')
         files['/brand.css'] = ('brand.css', 'text/css; charset=utf-8')
+        files['/notch'] = ('notch.html', 'text/html; charset=utf-8')
+        files['/notch.css'] = ('notch.css', 'text/css; charset=utf-8')
+        files['/notch.js'] = ('notch.js', 'text/javascript; charset=utf-8')
         files['/fonts/geologica.woff2'] = ('fonts/geologica.woff2', 'font/woff2')
         files['/fonts/jetbrains-mono.woff2'] = ('fonts/jetbrains-mono.woff2', 'font/woff2')
         if path in files:

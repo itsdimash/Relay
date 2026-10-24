@@ -15,6 +15,33 @@ def release(tag='v0.2.0', assets=True):
             'assets': [{'name': n, 'browser_download_url': base + n} for n in names]}
 
 
+class AppWatcherTests(unittest.TestCase):
+    def test_process_alive(self):
+        import os
+        from relay.lifecycle import process_alive
+        self.assertTrue(process_alive(os.getpid()))
+        child = subprocess.Popen(['/bin/sleep', '0'])
+        child.wait()
+        self.assertFalse(process_alive(child.pid))
+
+    def test_engine_stops_when_the_app_is_gone(self):
+        import os
+        import signal
+        import threading
+        from unittest import mock
+        from relay import lifecycle
+        child = subprocess.Popen(['/bin/sleep', '0'])
+        child.wait()
+        fake = mock.Mock(SHUTTING_DOWN=threading.Event())
+        with mock.patch.object(lifecycle.os, 'kill', wraps=os.kill) as kill:
+            with mock.patch.object(lifecycle.os, 'getpid', return_value=424242):
+                kill.side_effect = lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()) if pid == child.pid else None
+                thread = lifecycle.stop_when_app_exits(fake, child.pid, interval=0.01)
+                thread.join(2)
+        kill.assert_any_call(424242, signal.SIGTERM)
+        self.assertFalse(thread.is_alive())
+
+
 class VersionTests(unittest.TestCase):
     def test_parse_and_compare(self):
         self.assertEqual(parse_version('v1.2.3'), (1, 2, 3))

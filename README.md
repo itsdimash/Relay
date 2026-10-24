@@ -73,6 +73,15 @@ History and settings for the packaged app live in `~/Library/Application Support
 
 The app checks this repository's latest GitHub Release when it opens. When a newer version exists, a banner offers **Update now**: Relay downloads the new app, verifies its checksum, replaces itself in Applications, and reopens. Pushing code to GitHub does not update installed apps; publishing a release (a `v*` tag) does. Relay must be in Applications, and it will not update while a task is running.
 
+### Notch panel
+
+Move the pointer to the top centre of your screen, where the notch is, and a dark panel slides down. It shows the task that is running: a pixel-art room where the Observer, Builder and Reviewer pass work to each other, the step of the task, the latest agent message, and **Approve** / **Reject** when a plan is waiting for you. The panel also opens by itself when a plan or questions need you and briefly when a task finishes.
+
+- **Double-tap the right Command key** (⌘) opens the panel in any app and keeps it open; double-tap again, press Escape, or choose **View → Show or Hide Notch Panel** to close it. A Command shortcut such as ⌘C does not count.
+- **View → Open Notch Panel from Screen Top** turns the hover trigger off and on.
+- While it is on, closing the main window leaves Relay running so the panel keeps working; click the Dock icon to bring the window back, or press Command-Q to quit.
+- The panel is a page served by the local engine at `/notch`, so you can also open `http://127.0.0.1:48765/notch` in a browser.
+
 ### Connect your own accounts
 
 Relay uses the authentication already configured in your installed CLIs. It does not provide shared accounts, ask you to upload credentials, or require a separate Relay API key. Model access, provider configuration, billing, and usage limits remain those of your tools and accounts.
@@ -413,7 +422,7 @@ relay/                     Backend modules and application composition
 static/                    Dashboard: HTML, styles (brand.css), fonts, report renderers, icons
 static/app.js              Frontend startup and feature wiring
 static/js/                 Notifications, history, projects, teams, attachments, tasks, and shared helpers
-packaging/                 Native macOS app shell: window, engine launcher, Info.plist, entitlements
+packaging/                 Native macOS app shell: window, notch panel, engine launcher, Info.plist, entitlements
 scripts/                   macOS app build, disk image (make_dmg.sh) and icon scripts
 dist/                      Packaged app output (Relay-macOS-arm64.zip)
 tests/                     Workflow, HTTP, development, distribution, and rendering tests

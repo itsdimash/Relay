@@ -3,6 +3,7 @@
 // shows the dashboard in a native window, and stops the engine when the app quits.
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import "RelayNotchPanel.h"
 
 // A fixed port keeps the dashboard's saved settings (team, models, drafts) between launches,
 // because browser storage is tied to the address. If the port is busy, a free one is used.
@@ -16,13 +17,14 @@ static NSColor *RelayColor(unsigned int rgb) {
                            alpha:1.0];
 }
 
-@interface RelayAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate>
+@interface RelayAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, RelayNotchPanelDelegate>
 @property(nonatomic, strong) NSTask *server;
 @property(nonatomic, strong) NSMutableString *outputBuffer;
 @property(nonatomic, strong) NSMutableString *errorBuffer;
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSURL *serverURL;
+@property(nonatomic, strong) RelayNotchPanel *notch;
 @property(nonatomic) BOOL ready;
 @property(nonatomic) BOOL triedPreferredPort;
 @property(nonatomic) BOOL quitting;
@@ -85,6 +87,11 @@ static NSColor *RelayColor(unsigned int rgb) {
     reload.target = self;
     NSMenuItem *fullScreen = [viewMenu addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fullScreen.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *showNotch = [viewMenu addItemWithTitle:@"Show or Hide Notch Panel (double-tap right ⌘)" action:@selector(showNotchPanel:) keyEquivalent:@""];
+    showNotch.target = self;
+    NSMenuItem *toggleNotch = [viewMenu addItemWithTitle:@"Open Notch Panel from Screen Top" action:@selector(toggleNotchPanel:) keyEquivalent:@""];
+    toggleNotch.target = self;
     viewItem.submenu = viewMenu;
 
     NSMenuItem *windowItem = [[NSMenuItem alloc] init];
@@ -101,6 +108,35 @@ static NSColor *RelayColor(unsigned int rgb) {
 
 - (void)reloadDashboard:(id)sender {
     [self.webView reload];
+}
+
+- (void)showNotchPanel:(id)sender {
+    [self.notch toggle];
+}
+
+- (void)toggleNotchPanel:(id)sender {
+    self.notch.enabled = !self.notch.enabled;
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(toggleNotchPanel:)) {
+        item.state = self.notch.enabled ? NSControlStateValueOn : NSControlStateValueOff;
+        return self.notch != nil;
+    }
+    if (item.action == @selector(showNotchPanel:)) return self.notch != nil;
+    return YES;
+}
+
+#pragma mark - Notch panel
+
+- (void)notchPanelRequestsOpenRelay {
+    [self showMainWindow];
+}
+
+- (void)showMainWindow {
+    if (self.window.miniaturized) [self.window deminiaturize:nil];
+    [self.window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
 }
 
 #pragma mark - Move to Applications
@@ -288,6 +324,8 @@ static NSColor *RelayColor(unsigned int rgb) {
                                                     backing:NSBackingStoreBuffered
                                                       defer:NO];
     window.title = @"Relay";
+    // The notch panel keeps the app alive after this window is closed, so the window must survive closing.
+    window.releasedWhenClosed = NO;
     window.minSize = NSMakeSize(900, 620);
     window.backgroundColor = RelayColor(0xeceff4);
     window.titlebarAppearsTransparent = YES;
@@ -301,6 +339,12 @@ static NSColor *RelayColor(unsigned int rgb) {
     self.window = window;
 
     [webView loadRequest:[NSURLRequest requestWithURL:url]];
+
+    if (!self.notch) {
+        NSURL *notchURL = [NSURL URLWithString:@"notch" relativeToURL:url].absoluteURL;
+        self.notch = [[RelayNotchPanel alloc] initWithPageURL:notchURL];
+        self.notch.delegate = self;
+    }
 }
 
 - (BOOL)isLocalDashboardURL:(NSURL *)url {
@@ -414,11 +458,12 @@ static NSColor *RelayColor(unsigned int rgb) {
 #pragma mark - App lifecycle
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
-    if (!flag) [self.window makeKeyAndOrderFront:nil];
+    if (!self.window.visible) [self showMainWindow];
     return YES;
 }
 
-- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
+// With the notch panel on, Relay keeps running after its window closes so the panel can still show the task.
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return !self.notch.enabled; }
 
 - (void)fatal:(NSString *)message {
     [NSApp activateIgnoringOtherApps:YES];
