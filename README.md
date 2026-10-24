@@ -15,11 +15,13 @@ Use it for frontend work, backend changes, project observations, or implementati
 
 - **Inspect without editing.** Get an observation or a plan from the current files, including uncommitted changes.
 - **Choose your team.** Assign Claude Code or Codex to each role, select models and effort, add instructions, and save presets.
+- **Clarify before approving.** The Observer asks focused questions when key requirements are missing. Your answers refine the plan and never authorize edits.
 - **Approve before building.** Review the proposed plan, risks, and verification checks before the Builder starts.
 - **Bring visual context.** Pick, drop, or paste screenshots and reference images into tasks and follow-ups.
 - **Continue the conversation.** Ask read-only follow-up questions in the same saved chat.
 - **Act on findings.** Select issues and turn them into an editable planning or implementation brief with evidence attached.
 - **Review the result.** Read an overview, priority labels, next actions, file-by-file diffs, new-file previews, and Builder-reported checks.
+- **Recover saved work.** Retry a failed step or explicitly continue interrupted work in the same working copy, preserving completed results and approval records.
 - **Keep local history.** Search chats, reopen reports, or move conversations to recoverable local Trash.
 
 The dashboard opens with no conversation selected. Saved chats stay in the sidebar until you choose one.
@@ -87,7 +89,7 @@ Only one server may use a Relay data folder at a time, even if the ports differ.
 | --- | --- | --- | --- |
 | **Observe only** | Observer inspects and reports current behavior, risks, and findings | Disabled | Any existing folder |
 | **Plan only** | Observer proposes steps, affected files, risks, and verification criteria | Disabled | Any existing folder |
-| **Build & review** | Observer → your approval → Builder → Reviewer → fix/review rounds as needed | Builder only, after approval | Clean Git repository with at least one commit, selected at its root |
+| **Build & review** | Observer → clarification if needed → your approval → Builder → Reviewer → fix/review rounds as needed | Builder only, after approval | Clean Git repository with at least one commit, selected at its root |
 
 Read-only modes inspect your selected folder directly. They can see staged, unstaged, and untracked files without requiring a commit or stash. They do not treat those existing edits as changes made by an agent.
 
@@ -128,11 +130,21 @@ flowchart LR
 | **Reviewer** | Inspect the actual result against the task and acceptance checks; approve it or request evidence-backed fixes. |
 | **You** | Define the task, approve the plan, inspect the result, and decide whether to keep it. |
 
+### Clarify missing details
+
+For **Plan only** and **Build & review**, the Observer can ask up to five focused questions at a time when important requirements are unclear. Clear tasks go straight to a plan. Questions appear in **A few details before the plan**, with optional suggested answers and a text field for your own answer.
+
+Answer every question and choose **Send answers & update plan**. Relay sends the answers to the read-only Observer, which revises the plan or asks remaining questions. The task timer pauses while waiting for answers. Stop remains available.
+
+**Sending answers never approves edits.** A build still stops at **Awaiting your approval** with the final revised plan. Plan-only tasks finish with a read-only report. Observe-only tasks and report follow-ups keep their existing read-only report behavior.
+
+Questions and submitted answers stay in the chat under **Your clarification answers**, are preserved in follow-ups, and are included in the Builder and Reviewer handoffs. Unsent text is saved in this browser tab's session storage, so you can reload and reopen the waiting chat. A server restart interrupts the task; it does not resume questions or approve work automatically.
+
 ### Approval before editing
 
-Every real build task waits at **Awaiting your approval** after observation. **Approve & start building** releases the Builder; **Reject plan** stops the task without starting it. Approval covers the proposed implementation and its configured review/fix rounds.
+Every real build task waits at **Awaiting your approval** after observation and any clarification rounds. **Approve & start building** releases the Builder; **Reject plan** stops the task without starting it. Approval covers the proposed implementation and its configured review/fix rounds.
 
-The task's time limit pauses while waiting for this decision. Refreshing the browser preserves the pending plan. Restarting the server interrupts the task; it does not approve or resume it automatically.
+The task's time limit pauses while waiting for this decision. Refreshing the browser preserves the pending plan. Graceful shutdown stops the task and saves its changes. After a crash or forced termination, restart marks unfinished tasks interrupted. Neither path approves or resumes work automatically.
 
 Read-only tasks and follow-ups do not start a Builder and do not require this approval gate.
 
@@ -194,9 +206,27 @@ The **Changes** tab provides:
 
 **Reported checks are claims from the Builder, not tests independently rerun by Relay.** The Reviewer inspects source evidence; it does not serve as a separate test runner. A completed task does not establish that every check passed.
 
-Previews are bounded and show notices for truncation, binary files, and unavailable content. Older tasks without saved per-file previews use their existing patch where possible; their new-file bodies may be unavailable. The saved `changes.patch` contains tracked-file changes only; new files remain in the worktree and have separate previews for new tasks.
+Previews are bounded and show notices for truncation, binary files, and unavailable content. Older tasks without saved per-file previews use their existing patch where possible; their new-file bodies may be unavailable. New build snapshots save a complete `changes.patch`, including added, modified, deleted, and binary files, symlinks, and executable permissions. Ignored files are excluded. Generating the patch does not change the working copy’s Git staging area. Older patches may omit new files and are not offered as complete downloads.
 
-To keep a result, open the displayed working copy, inspect the changes, create a branch there, and commit through your normal Git workflow. **Relay does not automatically merge, commit, push, or export the result.** Keep any worktrees you still need; remove them using Git's worktree tools when appropriate.
+After the task finishes, choose **Download complete patch** in **Changes**. In a clean checkout of the same starting commit, run `git apply --check /path/to/relay-<chat-id>.patch`, then `git apply /path/to/relay-<chat-id>.patch`, and rerun your checks. This also preserves new files. You can instead open the displayed working copy, inspect the changes, create a branch there, and commit through your normal Git workflow. **Relay does not automatically merge, commit, or push the result.** Keep any worktrees you still need; remove them using Git's worktree tools when appropriate.
+
+## Recover a failed or interrupted task
+
+For tasks created with checkpoint support, a **Recover this task** or **Continue interrupted work** panel shows what is saved and which step comes next. Choose the action shown there:
+
+- **Retry review** reruns only the Reviewer against the preserved working copy and saved Builder report. It does not repeat observation or building.
+- **Continue build** keeps partial edits, asks the Builder to inspect what already exists, and continues the same round.
+- **Return to plan approval** reopens the saved plan for an explicit decision. An unapproved plan stays unapproved.
+- **Continue questions** preserves the pending question batch and previous answers; answers still do not authorize edits.
+- **Retry observation / plan update** repeats only the failed read-only stage.
+
+Relay checks that the task folder and working copy still exist and that a build's original commit and repository identity are unchanged. It does not reset, recreate, merge, or commit the working copy. A saved completed review can be reused only if its source fingerprint still matches; changed files require another review.
+
+Each recovery attempt gets a fresh time budget using the task's configured limit. The original review-round cap remains in force. Only one task can run, and a recovery cannot start while a previous worker is finishing its saves. **Recovery history** keeps previous errors and attempt outcomes. Provider prompts/results from retries have distinct attempt filenames.
+
+Recovery is always explicit. Restart never starts agents or approves a plan on its own. A rejected plan cannot be resumed, and reaching the review-round limit does not grant more rounds. Older tasks and setup failures without a checkpoint need a new task; their working copies remain available for manual inspection.
+
+A checkpoint records results only after Relay receives them. If a process crashes before a result is saved, that unsaved step may need to run again. Existing files remain available; recovery is a fresh CLI invocation with saved context, not a restored provider session.
 
 ## Controls and history
 
@@ -207,7 +237,7 @@ To keep a result, open the displayed working copy, inspect the changes, create a
 | **Without limit — rounds** | Continue fix/review rounds until approval, failure, Stop, or a configured deadline. |
 | **Without limit — time** | Remove Relay's deadline; a configured round limit still applies. |
 | Close the browser | Leave the coordinator running in its terminal. |
-| Restart the server | Preserve history and mark unfinished tasks interrupted. No automatic resume. |
+| Stop/restart the server | Control+C and SIGTERM stop the agent group and wait for task persistence. After a crash, unfinished tasks become interrupted. No automatic resume. |
 
 Unlimited settings do not bypass provider quotas, authentication failures, machine sleep, or process failures. Only one task runs at a time.
 
@@ -217,7 +247,7 @@ Search saved conversations in the sidebar. On smaller screens, use **History** t
 
 Open a chat's **…** menu and choose **Delete chat**, or use that button in a finished chat's activity panel. Running tasks must be stopped first.
 
-Relay moves the chat, its attachments, prompts, and logs into local Trash. The original project and task worktree remain intact. **Undo** restores the most recently deleted chat until the page reloads. This does not erase the CLIs' own histories or permanently remove local data.
+Relay moves the chat, its attachments, prompts, and logs into local Trash. The original project and task worktree remain intact. **Undo** restores the deleted chat while its notification is visible (ten seconds, paused while hovered or focused). Use the close button to dismiss it. Successful restoration feedback disappears after four seconds. Errors remain until dismissed or replaced. This does not erase the CLIs' own histories or permanently remove local data.
 
 To restore an older chat manually, stop Relay, move its folder from `data/trash/<chat-id>/` back to `data/runs/<chat-id>/`, and restart.
 
@@ -227,7 +257,7 @@ To restore an older chat manually, stop Relay, move its folder from `data/trash/
 | --- | --- |
 | `data/projects.json` | Saved project names and local folder paths |
 | `data/teams.json` | Saved team presets |
-| `data/runs/<chat-id>/state.json` | Conversation turns, status, reports, findings, approval records, checks, and saved change previews |
+| `data/runs/<chat-id>/state.json` | Conversation turns, status, checkpoints, recovery attempts, reports, findings, approval records, checks, and saved change previews |
 | `data/runs/<chat-id>/attachments/` | Images attached to that chat |
 | `data/runs/<chat-id>/events.jsonl` | Readable activity log |
 | `data/runs/<chat-id>/provider-events.jsonl` | Captured provider output and diagnostics |
@@ -281,6 +311,7 @@ Optional frontend syntax checks:
 
 ```sh
 node --check static/app.js
+# Also check any changed module under static/js/
 node --check static/markdown.js
 node --check static/review.js
 ```
@@ -292,9 +323,12 @@ Relay uses Python's `ThreadingHTTPServer`, not ASGI. `uvicorn server:app --reloa
 ### Project structure
 
 ```text
-server.py                 Coordinator, provider adapters, persistence, HTTP server
+server.py                 CLI launcher; composes and starts the backend
 dev.py                    Development reload supervisor
-static/                   Dashboard, report rendering, styles, and icons
+static/app.js             Frontend startup and feature wiring
+static/js/                Notifications, history, projects, teams, attachments, tasks, and shared helpers
+static/                   Report renderers, styles, HTML, and icons
+relay/                    Backend modules and application composition
 tests/                    Workflow, HTTP, development, and rendering tests
 docs/ARCHITECTURE.md       Architecture and implementation details
 CONTRIBUTING.md           Contribution and verification guide
@@ -316,17 +350,16 @@ See [Architecture](docs/ARCHITECTURE.md) for implementation details and [Contrib
 | Codex cannot start inside another agent's sandbox | Launch Relay yourself from Terminal or `Start.command`. |
 | Relay is already running | Use the existing server or stop its terminal process. Changing ports does not bypass the data-folder lock. |
 | Port is occupied | Choose another port with `--port 8766`. |
-| Build appears to be waiting | Open the chat and check whether the plan is awaiting your approval. |
+| Build appears to be waiting | Open the chat: the Observer may need answers, or the final plan may be awaiting approval. |
 | Updated interface behaves incorrectly | Restart a normal server after backend changes and refresh the page, or use development mode. |
 | Photo is rejected | Use PNG, JPEG, or WebP under 4 MB; convert HEIC first. Inherited images count toward the four-image limit. |
-| Task was interrupted | Start a new task; inspect any preserved worktree before proceeding. Automatic resume is not implemented. |
+| Task was interrupted | Open it and use the recovery action when available. Otherwise inspect the preserved working copy and start a new task. Nothing resumes automatically. |
 
 ## Current limits and next steps
 
-- No retry-from-step or automatic recovery of interrupted work.
-- No dedicated clarification/question stage before plan approval; follow-ups are available on completed reports.
+- No automatic recovery, provider-session resumption, or checkpoint migration for legacy tasks.
 - No independent Verifier role or enforced browser visual check for frontend work.
-- No automatic merge/export, provider quota tracking, or combined spending cap.
+- No automatic merge, provider quota tracking, or combined spending cap.
 - No incremental history loading, disk quota, or permanent Trash purge interface.
 - No hosted multi-user deployment or Windows support.
 

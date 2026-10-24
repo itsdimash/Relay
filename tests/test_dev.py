@@ -36,6 +36,7 @@ class DevTests(unittest.TestCase):
             for name in ['server.py', 'dev.py']:
                 shutil.copy2(ROOT / name, root / name)
             shutil.copytree(ROOT / 'static', root / 'static')
+            shutil.copytree(ROOT / 'relay', root / 'relay')
             with socket.socket() as sock:
                 sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
             log = (root / 'supervisor.log').open('w+')
@@ -66,7 +67,7 @@ class DevTests(unittest.TestCase):
                 self.assertEqual(request('/api/state')['token'], token, 'Static edits must not restart Python')
                 request('/api/run', {'demo':True}, token)
                 wait_until(lambda: request('/api/dev')['busy'])
-                with (root/'server.py').open('a') as f:f.write('\n# development restart test\n')
+                with (root/'relay/workflow.py').open('a') as f:f.write('\n# development restart test\n')
                 deadline = time.monotonic()+1.5
                 while time.monotonic() < deadline:
                     self.assertEqual(request('/api/state')['token'], token, 'Active task must not be interrupted')

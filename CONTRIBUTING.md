@@ -8,12 +8,18 @@ Use Python 3.10+ and Git in a POSIX environment. macOS is the primary environmen
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m py_compile server.py
+python3 -m compileall -q server.py relay
 node --check static/app.js
 python3 server.py --open
 ```
 
 Use `npm run dev` or `python3 dev.py` for automatic Python restarts and browser refresh. No npm install is required. The dev supervisor waits for active tasks to finish before restarting. If running `python3 server.py` directly instead, restart it after Python changes and reload after frontend changes. Stop the existing instance before launching another against the same data folder. The scripted example is useful for UI checks but does not verify real agent integration.
+
+## Backend architecture
+
+Start with `relay/application.py`, the composition root, and the module ownership table in [architecture](docs/ARCHITECTURE.md). `server.py` is only the launcher. Stateful services take the application context explicitly; do not import runtime state from the launcher or introduce another task registry. Provider permissions and plan approval remain separate responsibilities in provider command construction and workflow dispatch.
+
+Tests can construct `Application(root, data=temporary_path)` without starting a server or calling providers. When copying the application for process tests, include `relay/` alongside the launcher. Run the full suite after changes across module boundaries.
 
 ## Changes and validation
 

@@ -26,7 +26,20 @@ The browser does not connect to model APIs directly. Python launches the install
 | --- | --- |
 | `dev.py` | Development supervisor; watches Python app files, defers restart while busy, and starts server with `RELAY_DEV=1` |
 | `package.json` | Dependency-free npm entry points for dev, start, and tests |
-| `server.py` | Entry point, HTTP routing, project persistence, Git helpers, workflow, process control, and event parsing |
+| `server.py` | Small CLI launcher; constructs the default application and calls its lifecycle entry point |
+| `relay/application.py` | Composition root; owns per-instance runtime state and binds service functions, Run, and Handler |
+| `relay/contracts.py` | Shared report schema, role/mode constants, image limits, and cancellation exception |
+| `relay/http.py` | Local HTTP routes, Host/token/Origin checks, and allowlisted static responses |
+| `relay/workflow.py` | Run state machine, plan approval, clarification, checkpoints, snapshots, and review rounds |
+| `relay/processes.py` | Run process-control mixin: subprocess groups, stream draining, event decoding, and cancellation |
+| `relay/providers.py` | CLI discovery, model/team validation, restricted commands, and Run provider-call mixin |
+| `relay/git_ops.py` | Git inspection, bounded file previews, repository identity, and complete patch generation |
+| `relay/reports.py` | Report/question validation, check parsing, metadata, follow-up context, and timestamps |
+| `relay/attachments.py` | Image decoding and task-scoped saved attachment access |
+| `relay/registry.py` | Project and team preset persistence, plus folder browsing |
+| `relay/history.py` | Startup record loading, report lookup, state snapshots, and Trash/restore |
+| `relay/recovery.py` | Recovery eligibility, approval/workspace validation, and explicit worker admission |
+| `relay/lifecycle.py` | Startup, instance lock, dev revision, signal handling, and graceful shutdown |
 | `static/markdown.js` | Escaping-first Markdown subset renderer; raw HTML and non-HTTP(S) links disabled |
 | `static/report.css` | Final report document typography, code blocks, and tables |
 | `static/index.html` | Forms, saved-project dialogs, workflow controls, and task panels |
@@ -38,7 +51,40 @@ The browser does not connect to model APIs directly. Python launches the install
 | `Start.command` | macOS launcher; resolves its own directory and runs Python |
 | `data/` | Private runtime data; excluded from Git |
 
-`server.py` currently groups several responsibilities in one module. That keeps installation simple, but provider parsing, HTTP code, and workflow changes are coupled. The sections below describe logical boundaries, not separate packages already implemented.
+The backend is a dependency-free Python package. `server.py` remains the public launcher, so `python3 server.py --open`, npm scripts, and `Start.command` keep their existing behavior. Static files and private `data/` remain at the project root. Saved records and checkpoints use the existing formats; no migration is required.
+
+## Composition and dependency rules
+
+```mermaid
+flowchart TD
+    Launcher[server.py] --> App[Application: state and service bindings]
+    App --> HTTP[HTTP Handler]
+    App --> Run[Run workflow]
+    App --> Services[Registry / history / attachments / recovery / lifecycle]
+    Run --> Processes[ProcessControl mixin]
+    Run --> Providers[ProviderCalls mixin]
+    Services --> Helpers[Contracts / report helpers / Git helpers]
+    Providers --> Helpers
+    Processes --> Helpers
+    Run --> Helpers
+```
+
+`Application(root, data=None)` owns `ROOT`, `DATA`, `TOKEN`, `LOCK`, `RUNS`, `ACTIVE`, and `SHUTTING_DOWN`. Construction allocates in-memory state only; it does not create storage, open a server, or call an agent. Independent application instances have separate registries, tokens, locks, shutdown events, and bound Run/Handler classes. The standard launcher creates one application.
+
+Stateful service functions accept `app` explicitly as their first argument. The composition root binds them as application methods; the Handler, Run, and recovery admission code call those methods to share the same context. Stateless helpers remain ordinary functions, exposed as static application methods when needed by the orchestration layer. Services never import `server.py` or a default application singleton. Application-level dependencies can be replaced in tests without changing another application's bindings.
+
+`Run` inherits two focused implementation mixins. `ProcessControl` owns launch/stop and stream handling; `ProviderCalls` owns Claude/Codex request and response adaptation. Both operate on the owning Run's process fields, task folder, role, and injected `app`; neither maintains its own registry or starts a separate workflow. `Run.run_role` retains the mode and plan-approval gates before either adapter is dispatched.
+
+The application is the composition boundary, not a second workflow implementation. Add behavior to the owning module, then expose only the service needed by another boundary through `application.py`. Shared contracts cannot depend on HTTP, workflow, or persistence. Modules with pure helpers may import lower-level helpers directly. Stateful cross-service calls go through the supplied application to avoid circular imports and duplicate state.
+
+### Extending the backend
+
+- For a route, update `http.py`; keep workflow and persistence logic in their owning services. Preserve request token, Host, and Origin validation.
+- For a provider, update discovery/commands and adapters in `providers.py`, and event normalization in `processes.py` if its stream format differs. Keep capabilities in command construction and approval enforcement in the workflow.
+- For a workflow stage, update `workflow.py` and its explicit recovery contract in `recovery.py`. Persist the checkpoint before releasing a waiting worker.
+- For stored data or exports, use `registry.py`, `history.py`, `attachments.py`, or `git_ops.py` as appropriate. Preserve atomic replacement, path checks, and the existing task record format.
+
+The development supervisor already watches package Python files recursively. Tests copy the complete `relay/` package into disposable application roots, verify a module edit triggers deferred restart, and exercise instance isolation alongside the existing workflow/HTTP/recovery checks.
 
 ## Workflow and contract
 
@@ -81,10 +127,10 @@ Pause is a handoff gate, not a separate state or a suspended OS process. It perm
 - A nonblocking POSIX file lock on `data/.instance.lock` prevents two coordinator instances from sharing runtime storage, even on different ports. The OS releases the lock when the process exits; the lock file may remain.
 - `RLock` guards shared snapshots and file writes. This is not a database transaction system; some worker metadata updates occur between snapshots.
 - Agent processes use separate process groups. Reader threads drain stdout and stderr into a queue while a writer thread sends the prompt over stdin.
-- Stop requests set a cancellation event and signal the current process group, then attempt escalation. Detached processes that create their own session are not guaranteed to be terminated.
+- Stop requests set a cancellation event and signal the current process group, then attempt escalation. A per-run process lock serializes launch and cleanup; repeated cleanup is safe. Group permission errors after leader exit do not replace cancellation with failure, and direct signaling is attempted if the leader remains alive. Cleanup failures are recorded in task diagnostics. Detached processes that create their own session are not guaranteed to be terminated.
 - Initial version/auth checks and synchronous Git operations have their own timeouts. Cancellation and the task deadline are observed at the next cooperative check, not a hard wall-clock kill at every instruction.
 
-Restart preserves records and marks unfinished tasks interrupted. It does not recover a live provider session or resume the state machine.
+SIGINT and SIGTERM block new task admission, request cancellation, terminate the provider group, and wait up to 60 seconds for final snapshots before closing the server. A worker that cannot finish within that bound is saved as interrupted. The development supervisor forwards shutdown and allows this cleanup window. Restart after a crash preserves records and marks unfinished tasks interrupted. It does not recover a live provider session or start agents automatically. Explicit recovery can continue the saved state machine after validation.
 
 ## Persistence and history
 
@@ -92,7 +138,7 @@ Project saves and state snapshots use a temporary file and replacement. Readable
 
 `state.json` is the dashboard snapshot, not a durable transaction journal. A crash can leave its last snapshot behind the appended event log. Startup does not replay events. Finished chats can be moved to `data/trash/<task-id>/` and restored. A worker completion event blocks deletion while its final writes are pending. Deletion preserves the Git worktree and does not affect provider-side histories. No disk quota, permanent Trash purge, encryption, or automatic worktree cleanup exists.
 
-Tracked diffs use `git diff HEAD`. New files are listed separately and remain in the working copy; they are not included in `changes.patch`. Large diff excerpts and builder reports are bounded in review prompts, and the reviewer is instructed to read the actual files. A history entry records results, not a reproducible proof that all checks succeeded.
+Tracked diffs use `git diff HEAD`. New files are listed separately for review and included in `changes.patch`. A temporary Git index reads HEAD and stages the final working tree only into that temporary index. The binary, full-index patch includes additions, deletions, modes and links without changing the real index. Ignored files are excluded. Large diff excerpts and builder reports are bounded in review prompts, and the reviewer is instructed to read the actual files. A history entry records results, not a reproducible proof that all checks succeeded.
 
 Each step launches a fresh CLI session. Relay passes context explicitly through observations, findings, and builder reports. The coordinator does not resume a provider session or automatically combine CLI histories in desktop applications.
 
@@ -104,6 +150,7 @@ All routes require a recognized localhost Host header. Mutating POST requests re
 | --- | --- | --- |
 | GET | `/` and named static assets | Dashboard and icons; assets are allowlisted |
 | GET | `/api/state` | All stored task snapshots and browser mutation token |
+| GET | `/api/export?run=<id>` | Download a saved complete patch for a finished task |
 | GET | `/api/dev` | Dev-only revision and busy state; returns 404 outside dev mode |
 | GET | `/api/models` | Provider model choices and effort metadata |
 | GET | `/api/teams` | Built-in team and saved presets |
@@ -116,6 +163,7 @@ All routes require a recognized localhost Host header. Mutating POST requests re
 | POST | `/api/history/delete`, `/api/history/restore` | Move a finished chat to local Trash, or restore it; worktree preserved |
 | POST | `/api/run` | Validate options and create one task |
 | POST | `/api/pause`, `/api/resume`, `/api/stop` | Control the specified active task |
+| POST | `/api/recover` | Validate a saved checkpoint and explicitly continue the same task |
 
 The folder API can navigate folders accessible to the server's OS user. It is not confined to saved projects. The token and local binding protect the browser interface from unrelated websites; they are not an authorization boundary against local processes or a multi-user identity system.
 
@@ -128,7 +176,7 @@ Git worktrees separate source edits but are not security sandboxes. Project cont
 ## Known design limits
 
 1. **History cost grows with use.** Every activity event rewrites the full state snapshot, every poll returns every run with full event history, and the frontend rerenders the selected feed. Unlimited runs are supported logically but are not memory-, disk-, or bandwidth-bounded.
-2. **No recovery protocol.** A stopped or interrupted run cannot resume automatically. A new build task starts from the source repository's committed `HEAD`, not a previous task worktree. Read-only tasks inspect the selected folder's current files.
+2. **Bounded recovery.** New tasks can continue explicit checkpoints in the existing working copy. Legacy histories and setup failures without checkpoints cannot be resumed. Provider sessions are not restored; a result lost before its checkpoint may require repeating that step.
 3. **Provider coupling.** CLI flags and event formats may change. Current tests use fake processes; a real end-to-end compatibility check is required before a stable release.
 4. **Review is not independent test execution.** Read roles inspect source; the assigned builder reports the checks it runs.
 5. **Single-user POSIX scope.** No Windows process control, login system, hosted deployment, or concurrent task scheduling is implemented.
@@ -149,7 +197,7 @@ relay/
 server.py           # small launcher
 ```
 
-Before adding more agents or concurrent tasks, prioritize incremental event retrieval, interrupted-run recovery, explicit check records, provider session IDs, and live integration tests. The module tree above is a proposal, not the current source layout.
+Before adding more agents or concurrent tasks, prioritize incremental event retrieval, broader live recovery verification, explicit check records, provider session IDs, and live integration tests. The module tree above is a proposal, not the current source layout.
 
 ## Configurable teams
 
@@ -166,7 +214,7 @@ Adding another provider still needs a command adapter, event decoding, result no
 
 ## Development reload
 
-`npm run dev` invokes `python3 dev.py`; Node is only a command runner and is not a backend dependency. The supervisor watches Python source changes, excluding private runtime data, tests, dependency directories, and itself. It starts the existing server with `RELAY_DEV=1`, debounces source changes, checks `/api/dev`, and defers restart until the task worker has finished. It sends SIGINT for normal cleanup before starting a replacement process. Direct Ctrl+C stops the supervisor and child; it intentionally stops an active task too.
+`npm run dev` invokes `python3 dev.py`; Node is only a command runner and is not a backend dependency. The supervisor watches Python source changes, excluding private runtime data, tests, dependency directories, and itself. It starts the existing server with `RELAY_DEV=1`, debounces source changes, checks `/api/dev`, and defers restart until the task worker has finished. It sends SIGINT for normal cleanup before starting a replacement process. Direct Ctrl+C or SIGTERM stops the supervisor and child; it intentionally stops an active task too.
 
 In development mode, `/api/state` includes revision/busy metadata. Revision combines a hash of static asset mtimes/sizes with the per-process token, so it changes on static edits or server restart. Browser polling reloads the page when revision changes and the server is idle, retaining task drafts in session storage. Static edits do not restart the backend. Outside development mode no automatic refresh is enabled. There is no ASGI/Uvicorn entry point.
 
@@ -184,7 +232,7 @@ Real build tasks call `wait_for_plan` after observation and enter `awaiting_appr
 
 Structured provider output now requests `overview`, `next_actions`, and a priority enum on each finding. `validate_review` accepts older reports without those fields but validates present values; the UI labels missing priorities Unrated and older summary text as an excerpt. The full report remains expandable. Metadata is preserved per conversation turn.
 
-Build snapshots save `file_reviews`: per-file status, content, line counts, and preview notices. Git paths use NUL-separated output and rename detection is disabled for the per-file list. Tracked-file previews come from Git with external diff/text conversion disabled. New-file text reads are bounded, binary/invalid UTF-8 content is not rendered, and symlink or outside-workspace targets are not read. A 100,000 per-file/600,000 overall character budget bounds saved previews, with notices when content is omitted. `changes.patch` retains the original tracked patch behavior.
+Build snapshots save `file_reviews`: per-file status, content, line counts, and preview notices. Git paths use NUL-separated output and rename detection is disabled for the per-file list. Tracked-file previews come from Git with external diff/text conversion disabled. New-file text reads are bounded, binary/invalid UTF-8 content is not rendered, and symlink or outside-workspace targets are not read. A 100,000 per-file/600,000 overall character budget bounds saved previews, with notices when content is omitted. `changes.patch` is atomically replaced by a complete binary patch; `export_complete` marks successful generation. The Changes panel offers a download only after completion. `GET /api/export?run=<id>` serves the saved patch for finished tasks (including an earlier build followed by read-only turns), rejects active or legacy incomplete exports, and rejects symlink paths. It never reads arbitrary project paths or regenerates old patches on download.
 
 Each Builder round saves the complete report and extracts an optional fenced `relay-checks` JSON list. Only commands with passed/failed/not_run outcomes are shown as structured results; unsupported or malformed data never becomes an inferred passing check. `static/review.js` renders saved diff lines and report overview cards with escaping; `static/review.css` styles file navigation, diffs, priorities, and reported checks. No filesystem-read API is exposed by the viewer. Saved Builder reports and file reviews are included in conversation turn snapshots.
 
@@ -197,3 +245,56 @@ Saved bytes use generated hex ids and server-chosen extensions in the chat's `at
 Every role receives the saved reference set. Codex attaches paths via repeated `--image` flags with an explicit option terminator before the stdin prompt. Claude switches to `--input-format stream-json` only when images exist and sends one newline-terminated user message containing text and base64 image blocks. The launcher's optional `input_data` keeps the readable prompt separate from the multimodal input. No tool permissions or approval gates are expanded. Conversation turns preserve metadata; follow-ups retain images in place, while derived tasks copy image bytes to their own record.
 
 The browser keeps unsent image data in memory, supports picker/drop/paste with bounded files, and clears accepted images only after a successful task request. Development reload defers while unsent images exist; manual reload discards them. The image-count limit includes inherited references. Tests cover request ingestion, native provider payloads, inheritance, path safety, and Trash/restore. Browser submission checks use scripted providers, not live models.
+
+
+## Frontend features
+
+The dashboard uses native browser ES modules and needs no bundler or package installation. `static/app.js` is the composition root: it creates the feature controllers, supplies their callbacks, registers handlers once, restores development drafts, and starts initial loading.
+
+| File | Responsibility |
+| --- | --- |
+| `static/js/notifications.js` | Show, dismiss and time notifications; pause during hover/focus; run an optional action safely. No chat or API knowledge. |
+| `static/notifications.css` | Notification layout, controls, positioning and narrow-screen rules. |
+| `static/js/history.js` | Sidebar history, search, menus, deletion and restoration. Supplies Undo to notifications. |
+| `static/js/projects.js` | Saved project selection, project dialogs and folder browsing. |
+| `static/js/teams.js` | Provider connection status, team configuration, model/effort choices and presets. |
+| `static/js/attachments.js` | Pending image selection, previews, validation, paste/drop and outgoing payloads. |
+| `static/js/tasks.js` | Task modes, starting work, polling, Stop/Pause, approval, follow-ups and tab controls. |
+| `static/js/conversation.js` | Render the selected task, reports, progress, findings and saved changes. |
+| `static/js/findings.js` | Turn selected report findings into a new editable task draft. |
+| `static/js/api.js` | JSON requests and mutation token headers. |
+| `static/js/state.js` | The mutable values shared between features, including server snapshots and selected conversation. |
+| `static/js/constants.js`, `static/js/dom.js` | Workflow labels, default team, DOM lookup and escaping. |
+| `static/markdown.js`, `static/review.js` | Existing standalone renderers, imported by conversation rendering and still testable from Node. |
+
+Feature controllers keep their own private state (menus, folder browsing, team catalogs, and similar details). Features receive cross-feature operations as callbacks from app.js rather than importing one another, so there are no circular feature imports or global event-handler functions. Add new behavior to the feature that owns it; use app.js only to wire dependencies and start the application.
+
+The HTML loads app.js with `type="module"`. The server explicitly allowlists each frontend module and stylesheet; no general filesystem-serving route was added. New module files must be added to that allowlist.
+
+Success notifications last four seconds. Undo notifications last ten seconds, counting only time without hover or focus. Close dismisses immediately. Errors remain until dismissed or replaced. A generation guard prevents stale timers or completed asynchronous actions from dismissing a newer message. Notification markup sits outside the selected-conversation panel so it remains visible after the last chat is deleted.
+
+
+## Clarification before plan approval
+
+Structured observer output can include `questions: [{id, question, options}]`. At most five questions are accepted per round; IDs must be unique and safe for form fields. The provider schema includes this field for read-role responses, and Python validates it independently. Older records and fixtures without questions remain readable. Only observations may contain questions; review approval cannot use them to bypass findings or checks.
+
+For build/plan modes, pending questions enter `awaiting_clarification`. `Run.wait_for_clarification` snapshots a generated batch ID, questions, observation notes and empty answers, clears any plan approval, and waits on a dedicated event. The task deadline pauses. `POST /api/answer-clarification` requires the normal token/origin checks, the current active worker, the exact pending batch ID, and one non-empty answer per question (maximum 2,000 characters each). Stale, duplicate, incomplete and oversized answers are rejected before mutation. A successful reply saves the questions/answers, moves back to observing, and wakes only the clarification event. It cannot set plan approval or dispatch a Builder.
+
+The Observer receives the complete question/answer history and original task, then produces a revised plan or remaining questions. Histories exceeding the bounded context budget stop with an explicit error while preserving answers. Prompt and structured-result filenames include the observation-round index. Once no questions remain, build tasks use the existing separate approval gate; plan-only tasks finish read-only. Builder/Reviewer prompts and future conversation follow-ups include the answered requirements. Stop and restart retain existing cancellation/interruption behavior; there is no automatic resume.
+
+`static/js/clarification.js` owns the question form, suggestions, draft session storage, answer submission, and saved answer history; `static/clarification.css` owns its styling. app.js wires it to conversation rendering. Form contents are rebuilt only for a new question batch, so routine polling preserves typing. All model/user text is escaped or passed through the existing safe Markdown renderer. Session drafts are never treated as submissions or approval.
+
+
+## Explicit checkpoint recovery
+
+`info.workflow` (version 1) stores a nonce, next step, completed observation, build round, approved plan snapshot, Builder report and review feedback as applicable. Steps are `observe → clarify/refine → approve → build → review → decide`, with `report`, `complete` and `limit` outcomes. Checkpoints use the same atomic state replacement as other task metadata. Answers persist the `refine` step before waking the Observer; explicit approval persists `build` with the exact approved plan before releasing its event. A completed Builder report and the next `review` step are saved together. Review results advance to `decide`, allowing a saved result to finish without a second model call.
+
+`POST /api/recover` takes `id` and `checkpoint_id`. Standard token/origin controls apply. Admission rejects stale checkpoint IDs, unsupported/legacy states, rejected plans, missing approval proof, active/finalizing workers, and shutdown. It verifies the saved folder, expected task worktree root, original HEAD and Git common directory before replacing the in-memory Run. It does not recreate a worktree or change source history. The rehydrated Run keeps the same ID, folder, workspace, reports and conversation; it gets new process events, a fresh configured deadline, a new attempt number and a new checkpoint nonce. Repeated clicks cannot start concurrent workers. Retry round numbers remain unchanged until an actual completed review requests the next fix round.
+
+Build/review continuation requires the top-level approved plan ID/timestamp and exact matching checkpoint plan snapshot. Pre-approval recovery clears any stale approval markers and never infers consent. Pending clarification can retain its batch ID and session draft. Startup marks unfinished tasks and running recovery attempts interrupted without launching anything.
+
+Complete binary patches provide the working-tree fingerprint for reviews (tracked and non-ignored files, links and modes). Source changes during review fail the review attempt. When continuing a saved `decide` step, a changed fingerprint invalidates that review and returns to `review`; preserved Builder work is retained. Snapshot/export also refuses an unexpected HEAD change.
+
+Recovery attempts save the prior status/summary, source step, timestamps and outcome. Attempt suffixes keep new prompts and provider output from overwriting earlier evidence. Finished-step polling exposes recovery eligibility and worker-finalization state without running Git checks on every poll. `static/js/recovery.js` and `static/recovery.css` own the user action and history; app.js wires them into conversation rendering.
+
+This is coordinator checkpoint recovery, not a provider-session resume or an exactly-once execution journal. A crash between provider execution and durable result capture can repeat that unsaved step. Partial files are preserved and the resumed Builder is instructed to inspect and continue them. Existing legacy tasks are not migrated by guessing their last completed role.

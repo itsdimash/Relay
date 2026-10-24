@@ -1,0 +1,27 @@
+/* Motion is feedback, never a delay before reading or acting. */
+:root { --motion-fast: 160ms; --motion-state: 200ms; --motion-ease: cubic-bezier(.2,.8,.2,1); }
+button, .history-row, .history .history-more, .history-menu button {
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
+}
+button:active:not(:disabled) { transform: scale(.98); filter: none; }
+input, textarea, select { transition: border-color var(--motion-fast) var(--motion-ease); }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+.primary > span { transition: transform var(--motion-fast) var(--motion-ease); }
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover:not(:disabled) > span { transform: translateX(3px); }
+}
+dialog[open] { animation: relay-dialog var(--motion-state) var(--motion-ease); }
+dialog[open]::backdrop { animation: relay-backdrop var(--motion-state) ease-out; }
+.history-menu:not([hidden]) { transform-origin: top right; animation: relay-menu var(--motion-fast) var(--motion-ease); }
+.history-feedback:not([hidden]) { animation: relay-feedback var(--motion-state) var(--motion-ease); }
+@keyframes relay-dialog { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes relay-backdrop { from { opacity: 0; } to { opacity: 1; } }
+@keyframes relay-menu { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes relay-feedback { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  button:active:not(:disabled), .primary:hover:not(:disabled) > span { transform: none !important; }
+}

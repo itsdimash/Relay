@@ -44,5 +44,9 @@ assert.equal((r.diffLines({status:'new',content:'one line\n'}).match(/class="dif
 const latest=r.changeReview({files:[],builder_reports:[{round:1,report:'Earlier',checks:[{command:'test',status:'failed'}]},{round:2,report:'Latest',checks:[{command:'test',status:'passed'}]}]});
 assert.ok(latest.includes('1 passed'));assert.ok(latest.includes('0 failed'));
 assert.equal(r.summaryCard({status:'failed',summary:'Failure'}),'');
+const downloadable=r.changeReview({id:'abc',export_complete:true,files:[]});
+assert.ok(downloadable.includes('/api/export?run=abc'));assert.ok(downloadable.includes('download>Download complete patch'));
+assert.ok(!r.changeReview({id:'abc',files:[]}).includes('Download complete patch'));
+
 """
         subprocess.run(['node','-e',script,str(renderer),str(markdown)],check=True,capture_output=True,text=True)

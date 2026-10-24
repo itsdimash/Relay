@@ -1,3 +1,4 @@
+from http.server import ThreadingHTTPServer
 import importlib.util
 import base64
 import itertools
@@ -16,6 +17,7 @@ import urllib.error
 SPEC = importlib.util.spec_from_file_location('relay', Path(__file__).parents[1] / 'server.py')
 s = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(s)
+s = s.application
 REAL_WAIT_FOR_PLAN = s.Run.wait_for_plan
 
 
@@ -47,6 +49,7 @@ class WorkflowTests(unittest.TestCase):
         def approved_fixture(run, observation):
             run.info['plan'] = dict(id='fixture-approved-plan', **observation)
             run.info['approved_plan_id'] = 'fixture-approved-plan'
+            run.info['plan_approved_at'] = s.now()
         self.approval_patch = patch.object(s.Run,'wait_for_plan',approved_fixture)
         self.approval_patch.start()
 
@@ -492,9 +495,9 @@ class ProjectTests(unittest.TestCase):
     def test_one_instance_per_data_folder(self):
         handle=s.acquire_instance_lock()
         script=("import importlib.util;from pathlib import Path;"
-                "spec=importlib.util.spec_from_file_location('relay',"+repr(str(Path(s.__file__).resolve()))+");"
+                "spec=importlib.util.spec_from_file_location('relay',"+repr(str((s.ROOT / 'server.py')))+");"
                 "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
-                "m.DATA=Path("+repr(str(s.DATA))+");m.acquire_instance_lock()")
+                "m.application.DATA=Path("+repr(str(s.DATA))+");m.application.acquire_instance_lock()")
         try:
             result=subprocess.run([os.sys.executable,'-c',script],capture_output=True,text=True,timeout=10)
             self.assertNotEqual(result.returncode,0)
@@ -631,13 +634,119 @@ class HTTPTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory()
         self.old_data=s.DATA
         s.DATA=Path(self.temp.name)/'data'
-        self.server=s.ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
+        self.server=ThreadingHTTPServer(('127.0.0.1',0),s.Handler)
         self.port=self.server.server_port
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join()
         s.DATA=self.old_data
         self.temp.cleanup()
+    def test_recovery_endpoint_checks_token_checkpoint_and_preserves_completed_steps(self):
+        project=Path(self.temp.name)/'recovery-project';project.mkdir()
+        subprocess.run(['git','init','-q',str(project)],check=True)
+        s.git(project,'config','user.email','test@example.invalid');s.git(project,'config','user.name','Test')
+        (project/'app.txt').write_text('initial');s.git(project,'add','.');s.git(project,'commit','-qm','Initial')
+        calls=[];failed=[False]
+        def claude(run,prompt):
+            calls.append(run.current_role)
+            if run.current_role=='observer':return review('observed')
+            if not failed[0]:failed[0]=True;raise RuntimeError('Reviewer unavailable')
+            return review('approved')
+        def codex(run,prompt):calls.append('builder');return 'Saved Builder report'
+        def approve(run,observation):
+            run.info['plan']=dict(id='approved-fixture',**observation)
+            run.info['approved_plan_id']='approved-fixture';run.info['plan_approved_at']=s.now()
+        def post(body,token=s.TOKEN):
+            req=urllib.request.Request(f'http://127.0.0.1:{self.port}/api/recover',data=json.dumps(body).encode(),headers={'Content-Type':'application/json','X-Relay-Token':token})
+            return urllib.request.urlopen(req)
+        with patch.dict(s.RUNS,{},clear=True),patch.object(s,'ACTIVE',None),patch.object(s,'tool_status',return_value={name:dict(installed=True,signed_in=True) for name in s.PROVIDERS}),patch.object(s.Run,'claude',claude),patch.object(s.Run,'codex',codex),patch.object(s.Run,'wait_for_plan',approve):
+            run=s.Run('Task',project);run.execute();s.RUNS[run.id]=run
+            body=dict(id=run.id,checkpoint_id=run.info['workflow']['id'])
+            with self.assertRaises(urllib.error.HTTPError) as error:post(body,token='wrong')
+            self.assertEqual(error.exception.code,403)
+            with self.assertRaises(urllib.error.HTTPError) as error:post({**body,'checkpoint_id':'stale'})
+            self.assertEqual(error.exception.code,400)
+            run.finished.clear()
+            with self.assertRaises(urllib.error.HTTPError):post(body)
+            run.finished.set()
+            with post(body) as response:self.assertEqual(response.status,201)
+            recovered=s.RUNS[run.id];self.assertTrue(recovered.finished.wait(7))
+            self.assertEqual(recovered.info['status'],'done')
+            self.assertEqual(calls,['observer','builder','reviewer','reviewer'])
+            with self.assertRaises(urllib.error.HTTPError):post(body)
+
+    def test_clarification_answers_require_current_batch_and_never_approve(self):
+        run=s.Run('Clarify',self.temp.name)
+        run.info.update(status='awaiting_clarification',clarification=dict(id='batch1',questions=[dict(id='Q1',question='Which method?',options=[])],answers=None))
+        s.RUNS[run.id]=run
+        def post(body,token=s.TOKEN):
+            req=urllib.request.Request(f'http://127.0.0.1:{self.port}/api/answer-clarification',data=json.dumps(body).encode(),headers={'Content-Type':'application/json','X-Relay-Token':token})
+            return urllib.request.urlopen(req)
+        with patch.object(s,'ACTIVE',run):
+            body=dict(id=run.id,clarification_id='batch1',answers={'Q1':'Email link'})
+            with self.assertRaises(urllib.error.HTTPError) as error:post(body,token='wrong')
+            self.assertEqual(error.exception.code,403)
+            for changes in [dict(clarification_id='old'),dict(answers={}),dict(answers={'Q1':' '})]:
+                with self.assertRaises(urllib.error.HTTPError) as error:post({**body,**changes})
+                self.assertEqual(error.exception.code,400)
+            with post(body) as response:self.assertEqual(response.status,200)
+            self.assertEqual(run.info['status'],'observing')
+            self.assertTrue(run.clarification_event.is_set())
+            self.assertFalse(run.approval_event.is_set())
+            self.assertNotIn('approved_plan_id',run.info)
+            with self.assertRaises(urllib.error.HTTPError):post(body)
+        self.assertEqual(len(run.info['clarifications']),1)
+
+    def test_frontend_module_graph_loads_with_static_allowlist(self):
+        import re
+        from urllib.parse import urljoin, urlparse
+        base=f'http://127.0.0.1:{self.port}'
+        with urllib.request.urlopen(base+'/') as response:
+            html=response.read().decode()
+        self.assertIn('<script type="module" src="/app.js">',html)
+        seen=set();pending=['/app.js']
+        while pending:
+            path=pending.pop()
+            if path in seen:continue
+            seen.add(path)
+            with urllib.request.urlopen(base+path) as response:
+                self.assertIn('javascript',response.headers['Content-Type'])
+                source=response.read().decode()
+            for match in re.finditer(r"(?:from|import)\s+['\"]([^'\"]+)['\"]",source):
+                pending.append(urlparse(urljoin(base+path,match.group(1))).path)
+        self.assertIn('/js/notifications.js',seen)
+        self.assertIn('/js/history.js',seen)
+        self.assertIn('/markdown.js',seen)
+        with urllib.request.urlopen(base+'/notifications.css') as response:self.assertEqual(response.status,200)
+        for path in ['/js/server.py','/js/state.json','/js/../server.py']:
+            with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(base+path)
+            self.assertEqual(error.exception.code,404)
+
+    def test_export_rejects_active_legacy_and_symlink_records(self):
+        run=s.Run('Export fixture',self.temp.name)
+        s.RUNS[run.id]=run
+        url=f'http://127.0.0.1:{self.port}/api/export?run={run.id}'
+        def status(expected):
+            with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(url)
+            self.assertEqual(error.exception.code,expected)
+        run.info['export_complete']=True
+        (run.folder/'changes.patch').write_bytes(b'complete patch')
+        status(409)
+        run.info['status']='done';run.finished.set()
+        run.info['export_complete']=False
+        status(409)
+        run.info['export_complete']=True
+        with urllib.request.urlopen(url) as response:
+            self.assertEqual(response.read(),b'complete patch')
+            self.assertIn('attachment',response.headers['Content-Disposition'])
+        # A read-only follow-up keeps the earlier build's export available.
+        run.info['mode']='observe';run.info['turns']=[dict(mode='build',export_complete=True)]
+        with urllib.request.urlopen(url) as response:self.assertEqual(response.read(),b'complete patch')
+        (run.folder/'changes.patch').unlink()
+        outside=Path(self.temp.name)/'private';outside.write_text('not an export')
+        (run.folder/'changes.patch').symlink_to(outside)
+        status(404)
+
     def test_report_actions_http(self):
         root=s.Run('Original observation',self.temp.name,mode='observe',attachments=s.decode_images([image_payload()]))
         root.info.update(status='done',summary='Original evidence',findings=review('needs_changes')['findings'])

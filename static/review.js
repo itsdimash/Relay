@@ -37,6 +37,7 @@
    const checks=(latest?.checks||[]).map(c=>({...c,round:latest.round}));
    const counts={passed:0,failed:0,not_run:0};checks.forEach(c=>counts[c.status]=(counts[c.status]||0)+1);
    let html='<div class="change-review"><div class="review-overview"><div><span class="brief-label">Saved working copy</span><h3>'+files.length+' changed '+(files.length===1?'file':'files')+'</h3></div><p>Review the diff before keeping changes. Your original checkout is separate.</p></div>';
+   if(run.export_complete&&run.id)html+='<a class="export-patch" href="/api/export?run='+encodeURIComponent(run.id)+'" download>Download complete patch</a>';
    if(run.workspace)html+='<p class="review-location">'+esc(run.workspace)+'</p>';
    html+='<section class="reported-checks"><div class="checks-heading"><h4>Builder-reported checks · latest round</h4><span>Reported by the agent · not independently rerun by Relay</span></div>';
    if(checks.length){

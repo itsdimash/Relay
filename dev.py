@@ -45,7 +45,7 @@ def stop_child(process):
         return
     try:
         process.send_signal(signal.SIGINT)
-        process.wait(timeout=8)
+        process.wait(timeout=65)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=3)
@@ -71,6 +71,13 @@ def main():
     process = start(args.open)
     print('[dev] Python changes restart the server; static changes refresh the browser.', flush=True)
     print('[dev] Restarts wait for running tasks to finish. Press Control+C to stop.', flush=True)
+    stopping = False
+    def handle_shutdown(signum, frame):
+        nonlocal stopping
+        if not stopping:
+            stopping = True
+            raise KeyboardInterrupt
+    previous_handlers = {sig: signal.signal(sig, handle_shutdown) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         while True:
             time.sleep(.4)
@@ -94,7 +101,12 @@ def main():
     except KeyboardInterrupt:
         print('\n[dev] Stopping Relay…', flush=True)
     finally:
-        stop_child(process)
+        stopping = True
+        try:
+            stop_child(process)
+        finally:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
 
 
 if __name__ == '__main__':
