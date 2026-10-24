@@ -5,9 +5,9 @@
 NSString *const RelayNotchEnabledKey = @"RelayNotchEnabled";
 
 static const CGFloat PanelWidth = 640;
-static const CGFloat PanelHeight = 262;
+static const CGFloat PanelHeight = 284;
 static const CGFloat PanelRadius = 28;
-static const CGFloat TriggerHalfWidth = 150;  // how wide the hot zone at the top centre is
+static const CGFloat TriggerMargin = 40;      // hot zone is the notch plus this much on each side
 static const CGFloat TriggerDepth = 3;        // how close to the very top edge the pointer must be
 static const NSTimeInterval ShowDelay = 0.15; // the pointer must rest in the hot zone this long
 static const NSTimeInterval HideDelay = 0.45; // grace period after the pointer leaves the panel
@@ -54,7 +54,9 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 @property(nonatomic) BOOL shown;
 @property(nonatomic) BOOL pinned;   // stays until the pointer has visited and left
 @property(nonatomic) BOOL hovered;  // the pointer has been over the panel since it appeared
-@property(nonatomic) NSUInteger animationToken;
+@property(nonatomic, strong) NSTimer *frameTimer;
+@property(nonatomic, strong) NSScreen *screen;
+@property(nonatomic) CGFloat progress; // 0: the size of the notch, 1: fully open
 @end
 
 @implementation RelayNotchPanel
@@ -113,7 +115,7 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     // Round only the bottom corners so the panel looks like it hangs from the screen edge.
     NSView *container = [[NSView alloc] initWithFrame:frame];
     container.wantsLayer = YES;
-    container.layer.backgroundColor = [NSColor colorWithRed:0.027 green:0.035 blue:0.047 alpha:1].CGColor;
+    container.layer.backgroundColor = NSColor.blackColor.CGColor; // the same black as the notch itself
     container.layer.cornerRadius = PanelRadius;
     container.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     container.layer.masksToBounds = YES;
@@ -124,7 +126,8 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     handler.target = self;
     [configuration.userContentController addScriptMessageHandler:handler name:@"relayPanel"];
     WKWebView *webView = [[RelayNotchWebView alloc] initWithFrame:container.bounds configuration:configuration];
-    webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    // The page keeps its full size and stays pinned to the top while the window grows out of the notch.
+    webView.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin;
     webView.navigationDelegate = self;
     [webView setValue:@NO forKey:@"drawsBackground"];
     [container addSubview:webView];
@@ -141,9 +144,72 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     return nil;
 }
 
-- (NSRect)shownFrameOnScreen:(NSScreen *)screen {
+// The size of the physical notch, or a similar pill on Macs without one.
+- (NSSize)notchSizeForScreen:(NSScreen *)screen {
+    CGFloat width = 180, height = 26;
+    if (@available(macOS 12.0, *)) {
+        if (screen.safeAreaInsets.top > 0) {
+            height = screen.safeAreaInsets.top;
+            NSRect left = screen.auxiliaryTopLeftArea, right = screen.auxiliaryTopRightArea;
+            if (!NSIsEmptyRect(left) && !NSIsEmptyRect(right) && NSMinX(right) > NSMaxX(left)) {
+                width = NSMinX(right) - NSMaxX(left);
+            }
+        }
+    }
+    return NSMakeSize(width, height);
+}
+
+// progress 0 is exactly the notch; 1 is the open panel hanging from the top edge.
+- (void)applyProgress:(CGFloat)progress {
+    self.progress = progress;
+    NSScreen *screen = self.screen ?: NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+    if (!screen) return;
     NSRect area = screen.frame;
-    return NSMakeRect(NSMidX(area) - PanelWidth / 2, NSMaxY(area) - PanelHeight, PanelWidth, PanelHeight);
+    NSSize notch = [self notchSizeForScreen:screen];
+    CGFloat amount = MAX(0, progress);
+    CGFloat width = notch.width + (PanelWidth - notch.width) * amount;
+    CGFloat height = notch.height + (PanelHeight - notch.height) * amount;
+    NSRect frame = NSMakeRect(NSMidX(area) - width / 2, NSMaxY(area) - height, width, height);
+    [self.window setFrame:frame display:YES];
+    CGFloat settled = MIN(1, amount);
+    ((NSView *)self.window.contentView).layer.cornerRadius = 9 + (PanelRadius - 9) * settled;
+    // The content appears once the panel is mostly open and goes first when it closes.
+    self.webView.alphaValue = MIN(1, MAX(0, (settled - 0.5) / 0.4));
+    [self.window invalidateShadow];
+}
+
+- (void)animateToProgress:(CGFloat)target duration:(NSTimeInterval)duration completion:(void (^)(void))completion {
+    [self.frameTimer invalidate];
+    CGFloat start = self.progress;
+    if (duration <= 0 || start == target) {
+        [self applyProgress:target];
+        if (completion) completion();
+        return;
+    }
+    NSDate *began = [NSDate date];
+    __weak RelayNotchPanel *weakSelf = self;
+    NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 90 repeats:YES block:^(NSTimer *tick) {
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (!strongSelf) { [tick invalidate]; return; }
+        CGFloat t = MIN(1, -[began timeIntervalSinceNow] / duration);
+        CGFloat eased;
+        if (target > start) {
+            // Opening: fast start, a small overshoot, then settle.
+            CGFloat u = t - 1;
+            eased = 1 + 2.2 * u * u * u + 1.2 * u * u;
+        } else {
+            eased = t * t * t;
+        }
+        [strongSelf applyProgress:start + (target - start) * eased];
+        if (t >= 1) {
+            [tick invalidate];
+            strongSelf.frameTimer = nil;
+            [strongSelf applyProgress:target];
+            if (completion) completion();
+        }
+    }];
+    [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+    self.frameTimer = timer;
 }
 
 #pragma mark - Showing and hiding
@@ -152,27 +218,17 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     if (!screen) screen = NSScreen.mainScreen ?: NSScreen.screens.firstObject;
     if (!screen) return;
     [self cancelTimer:&_hideTimer];
-    NSRect target = [self shownFrameOnScreen:screen];
-    self.animationToken += 1;
-    NSUInteger token = self.animationToken;
-
+    self.screen = screen;
     if (!self.shown) {
         self.shown = YES;
         self.hovered = NO;
-        [self.window setFrame:NSOffsetRect(target, 0, 40) display:NO];
-        self.window.alphaValue = 0;
+        [self applyProgress:0];
         [self.window orderFrontRegardless];
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-            context.duration = 0.3;
-            context.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.2 :0.8 :0.2 :1.0];
-            [[self.window animator] setFrame:target display:YES];
-            [[self.window animator] setAlphaValue:1];
-        } completionHandler:^{
-            if (token == self.animationToken) self.window.alphaValue = 1;
-        }];
-    } else {
-        self.window.alphaValue = 1;
-        [self.window setFrame:target display:YES];
+        [self animateToProgress:1 duration:0.45 completion:nil];
+    } else if (self.progress < 1 && !self.frameTimer) {
+        [self animateToProgress:1 duration:0.3 completion:nil];
+    } else if (!self.frameTimer) {
+        [self applyProgress:1];
     }
 }
 
@@ -184,21 +240,11 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     self.hovered = NO;
     if (!self.shown) return;
     self.shown = NO;
-    self.animationToken += 1;
-    NSUInteger token = self.animationToken;
-    if (!animated) {
-        [self.window orderOut:nil];
-        return;
-    }
-    NSRect away = NSOffsetRect(self.window.frame, 0, 40);
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-        context.duration = 0.2;
-        context.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
-        [[self.window animator] setFrame:away display:YES];
-        [[self.window animator] setAlphaValue:0];
-    } completionHandler:^{
+    __weak RelayNotchPanel *weakSelf = self;
+    [self animateToProgress:0 duration:animated ? 0.28 : 0 completion:^{
         // A new show request may have started while this was running.
-        if (token == self.animationToken) [self.window orderOut:nil];
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (strongSelf && !strongSelf.shown) [strongSelf.window orderOut:nil];
     }];
 }
 
@@ -253,8 +299,8 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
     NSScreen *screen = [self screenForPoint:point];
     if (!screen) return NO;
     NSRect area = screen.frame;
-    return point.y >= NSMaxY(area) - TriggerDepth &&
-           fabs(point.x - NSMidX(area)) <= TriggerHalfWidth;
+    CGFloat half = [self notchSizeForScreen:screen].width / 2 + TriggerMargin;
+    return point.y >= NSMaxY(area) - TriggerDepth && fabs(point.x - NSMidX(area)) <= half;
 }
 
 - (void)pointerMoved {

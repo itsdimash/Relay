@@ -1,6 +1,6 @@
-/* Notch panel: a compact, dark view of the running task. Sized for a 640 x 262 floating window. */
+/* Notch panel: a compact, dark view of the running task. Sized for a 640 x 284 floating window. */
 :root {
-  --bg: #07090c;
+  --bg: #000;
   --bg-2: #10141a;
   --line: rgba(255, 255, 255, .09);
   --text: #eef1f5;
@@ -20,7 +20,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 button { font: inherit; color: inherit; cursor: pointer; }
 [hidden] { display: none !important; }
 
-.panel { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; height: 100%; padding: 22px 18px 16px; }
+.panel { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; height: 100%; padding: 40px 18px 16px; }
 
 /* Room */
 .room { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
