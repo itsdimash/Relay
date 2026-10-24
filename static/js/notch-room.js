@@ -213,7 +213,8 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       rect(GATE_X - 12, 30, 24, 14, glow[0]);
       ctx.globalAlpha = 1;
     }
-    rect(GATE_X - 2, 31, 4, 4, lamp);
+    // The lamp only exists while it means something; an unlit one looked like a stray mark above the door.
+    if (glow || scene.actor === 'relay') rect(GATE_X - 2, 31, 4, 4, lamp);
     rect(GATE_X - 6, 44, 12, 30, scene.actor === 'you' ? '#1f1a10' : '#0e131a');
     rect(GATE_X + 2, 58, 2, 2, scene.actor === 'you' ? '#f2b24c' : '#2b3340');
   }
