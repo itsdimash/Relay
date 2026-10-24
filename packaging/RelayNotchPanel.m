@@ -7,8 +7,7 @@ NSString *const RelayNotchEnabledKey = @"RelayNotchEnabled";
 static const CGFloat PanelWidth = 640;
 static const CGFloat PanelHeight = 284;
 static const CGFloat PanelRadius = 28;
-static const CGFloat TriggerMargin = 40;      // hot zone is the notch plus this much on each side
-static const CGFloat TriggerDepth = 3;        // how close to the very top edge the pointer must be
+static const CGFloat TriggerMargin = 55;      // hot zone is the notch plus this much on each side
 static const NSTimeInterval ShowDelay = 0.15; // the pointer must rest in the hot zone this long
 static const NSTimeInterval HideDelay = 0.45; // grace period after the pointer leaves the panel
 static const NSTimeInterval DoneVisibleSeconds = 7.0;
@@ -315,8 +314,10 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     NSScreen *screen = [self screenForPoint:point];
     if (!screen) return NO;
     NSRect area = screen.frame;
-    CGFloat half = [self notchSizeForScreen:screen].width / 2 + TriggerMargin;
-    return point.y >= NSMaxY(area) - TriggerDepth && fabs(point.x - NSMidX(area)) <= half;
+    // The hot zone is the whole menu bar band around the notch, not only the top pixel row.
+    NSSize notch = [self notchSizeForScreen:screen];
+    CGFloat half = notch.width / 2 + TriggerMargin;
+    return point.y >= NSMaxY(area) - (notch.height + 4) && fabs(point.x - NSMidX(area)) <= half;
 }
 
 // Double-tap the right Command key to open or close the panel. The key state is read directly,
