@@ -3,7 +3,9 @@ from pathlib import Path
 import unittest
 
 from relay import updater
-from relay.updater import Updater, clean_environment, describe, parse_version, pick_asset
+import subprocess
+
+from relay.updater import Updater, _curl, clean_environment, describe, parse_version, pick_asset
 
 
 def release(tag='v0.2.0', assets=True):
@@ -29,6 +31,32 @@ class VersionTests(unittest.TestCase):
     def test_only_https_assets_are_trusted(self):
         bad = {'assets': [{'name': updater.ASSET, 'browser_download_url': 'http://example.com/a.zip'}]}
         self.assertEqual(pick_asset(bad, updater.ASSET), '')
+
+
+class CurlTests(unittest.TestCase):
+    def test_uses_system_curl_over_https_only(self):
+        seen = []
+        def fake(command, **kwargs):
+            seen.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout=b'{"ok": 1}', stderr=b'')
+        self.assertEqual(_curl('https://api.github.com/x', run=fake), b'{"ok": 1}')
+        self.assertEqual(seen[0][0], '/usr/bin/curl')
+        self.assertIn('=https', seen[0])
+
+    def test_failure_raises_with_curl_message(self):
+        def fake(command, **kwargs):
+            return subprocess.CompletedProcess(command, 60, stdout=b'', stderr=b'certificate problem')
+        with self.assertRaises(OSError) as raised:
+            _curl('https://api.github.com/x', run=fake)
+        self.assertIn('certificate problem', str(raised.exception))
+
+    def test_check_reports_the_reason_when_it_fails(self):
+        def fetch(url):
+            raise OSError('certificate problem')
+        service = Updater({'RELAY_APP_VERSION': '0.1.0'}, fetch=fetch)
+        info = service.public()
+        self.assertFalse(info['available'])
+        self.assertIn('certificate problem', info['error'])
 
 
 class EnvironmentTests(unittest.TestCase):

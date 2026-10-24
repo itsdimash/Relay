@@ -14,13 +14,12 @@ import stat
 import subprocess
 import tempfile
 import time
-import urllib.request
 
 REPOSITORY = 'itsdimash/Relay'
 LATEST_URL = f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 ASSET = 'Relay-macOS-arm64.zip'
 RESTART_STATUS = 75  # the native shell treats this exit code as "quit for an update"
-CHECK_TTL = 6 * 60 * 60
+CHECK_TTL = 30 * 60
 MAX_DOWNLOAD = 400 * 1024 * 1024
 
 _VERSION = re.compile(r'^v?(\d+)\.(\d+)\.(\d+)')
@@ -49,10 +48,23 @@ def pick_asset(release, name):
     return ''
 
 
-def _fetch_json(url, opener=urllib.request.urlopen, timeout=8):
-    request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'Relay-updater'})
-    with opener(request, timeout=timeout) as response:
-        return json.loads(response.read().decode('utf-8'))
+def _curl(url, timeout=15, output=None, run=subprocess.run):
+    """Fetch an https URL with macOS's own curl, which trusts the system certificates.
+
+    A bundled Python often lacks CA certificates and cannot verify GitHub.
+    """
+    command = ['/usr/bin/curl', '-fsSL', '--proto', '=https', '--max-time', str(timeout),
+               '--max-filesize', str(MAX_DOWNLOAD), '-H', 'User-Agent: Relay-updater', url]
+    if output:
+        command += ['-o', str(output)]
+    result = run(command, capture_output=True, timeout=timeout + 10)
+    if result.returncode != 0:
+        raise OSError((result.stderr or b'').decode('utf-8', 'replace').strip() or 'Download failed.')
+    return result.stdout
+
+
+def _fetch_json(url, run=subprocess.run, timeout=10):
+    return json.loads(_curl(url, timeout, run=run).decode('utf-8'))
 
 
 def describe(current, release):
@@ -77,6 +89,7 @@ class Updater:
         self.clock = clock
         self._cached = None
         self._checked = 0.0
+        self.last_error = ''
 
     @property
     def current(self):
@@ -94,16 +107,20 @@ class Updater:
             return self._cached
         try:
             release = self.fetch(LATEST_URL)
-        except Exception:
+        except Exception as error:
+            self.last_error = str(error)
             # Offline or rate limited: stay quiet, try again on the next check.
             return self._cached or {'enabled': True, 'current': self.current, 'latest': '', 'available': False, 'notes_url': ''}
+        self.last_error = ''
         self._cached = describe(self.current, release)
         self._cached['_release'] = release
         self._checked = self.clock()
         return self._cached
 
     def public(self, force=False):
-        return {key: value for key, value in self.check(force).items() if not key.startswith('_')}
+        info = {key: value for key, value in self.check(force).items() if not key.startswith('_')}
+        info['error'] = self.last_error
+        return info
 
     def install_problem(self):
         """Why this copy cannot replace itself, or '' when it can."""
@@ -118,28 +135,19 @@ class Updater:
             return 'Relay cannot write to its folder. Move it to Applications, or download the new version manually.'
         return ''
 
-    def download(self, url, destination, opener=urllib.request.urlopen):
-        request = urllib.request.Request(url, headers={'User-Agent': 'Relay-updater'})
-        digest, size = hashlib.sha256(), 0
-        with opener(request, timeout=30) as response, open(destination, 'wb') as out:
-            while True:
-                chunk = response.read(1024 * 256)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > MAX_DOWNLOAD:
-                    raise ValueError('The update download is unexpectedly large.')
+    def download(self, url, destination, run=subprocess.run):
+        _curl(url, 300, output=destination, run=run)
+        digest = hashlib.sha256()
+        with open(destination, 'rb') as handle:
+            for chunk in iter(lambda: handle.read(1024 * 256), b''):
                 digest.update(chunk)
-                out.write(chunk)
         return digest.hexdigest()
 
-    def expected_checksum(self, release, opener=urllib.request.urlopen):
+    def expected_checksum(self, release, run=subprocess.run):
         url = pick_asset(release, ASSET + '.sha256')
         if not url:
             return ''
-        request = urllib.request.Request(url, headers={'User-Agent': 'Relay-updater'})
-        with opener(request, timeout=15) as response:
-            text = response.read(4096).decode('utf-8', 'replace')
+        text = _curl(url, 20, run=run)[:4096].decode('utf-8', 'replace')
         match = re.match(r'\s*([0-9a-fA-F]{64})', text)
         return match.group(1).lower() if match else ''
 

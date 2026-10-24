@@ -3,7 +3,7 @@ import { $ } from './dom.js';
 import { request } from './api.js';
 import { state } from './state.js';
 
-export function createUpdates({ recheckMs = 6 * 60 * 60 * 1000 } = {}) {
+export function createUpdates({ recheckMs = 30 * 60 * 1000 } = {}) {
   let dismissed = '';
   function show(info) {
     const banner = $('updateBanner');
@@ -52,6 +52,9 @@ export function createUpdates({ recheckMs = 6 * 60 * 60 * 1000 } = {}) {
       clearInterval(wait);
       check();
       setInterval(check, recheckMs);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) check();
+      });
     }, 500);
   }
   return { init, check };
