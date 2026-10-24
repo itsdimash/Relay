@@ -46,8 +46,7 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 @property(nonatomic, strong) NSURL *pageURL;
 @property(nonatomic, strong) RelayNotchWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
-@property(nonatomic, strong) id globalMonitor;
-@property(nonatomic, strong) id localMonitor;
+@property(nonatomic, strong) NSTimer *pollTimer;
 @property(nonatomic, strong) NSTimer *showTimer;
 @property(nonatomic, strong) NSTimer *hideTimer;
 @property(nonatomic, strong) NSTimer *doneTimer;
@@ -139,7 +138,9 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 
 - (NSScreen *)screenForPoint:(NSPoint)point {
     for (NSScreen *screen in NSScreen.screens) {
-        if (NSPointInRect(point, screen.frame)) return screen;
+        // The pointer can sit exactly on the top edge, which NSPointInRect would treat as outside.
+        NSRect frame = screen.frame;
+        if (point.x >= NSMinX(frame) && point.x <= NSMaxX(frame) && point.y >= NSMinY(frame) && point.y <= NSMaxY(frame)) return screen;
     }
     return nil;
 }
@@ -270,23 +271,22 @@ static const NSTimeInterval DoneVisibleSeconds = 7.0;
 
 #pragma mark - Pointer tracking
 
+// The pointer position is read about 25 times a second. This works in every app and Space,
+// needs no special permission, and also catches the very top pixel row that event monitors can miss.
 - (void)installMonitors {
-    if (self.globalMonitor) return;
+    if (self.pollTimer) return;
     __weak RelayNotchPanel *weakSelf = self;
-    // Global monitors see the pointer while other apps are in front. They need no special permission.
-    self.globalMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^(NSEvent *event) {
+    NSTimer *timer = [NSTimer timerWithTimeInterval:0.04 repeats:YES block:^(NSTimer *tick) {
         [weakSelf pointerMoved];
     }];
-    // The global monitor does not report events inside Relay's own windows.
-    self.localMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^NSEvent *(NSEvent *event) {
-        [weakSelf pointerMoved];
-        return event;
-    }];
+    timer.tolerance = 0.02;
+    [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+    self.pollTimer = timer;
 }
 
 - (void)removeMonitors {
-    if (self.globalMonitor) { [NSEvent removeMonitor:self.globalMonitor]; self.globalMonitor = nil; }
-    if (self.localMonitor) { [NSEvent removeMonitor:self.localMonitor]; self.localMonitor = nil; }
+    [self.pollTimer invalidate];
+    self.pollTimer = nil;
     [self cancelTimer:&_showTimer];
 }
 
