@@ -82,6 +82,11 @@ class Handler(BaseHTTPRequestHandler):
                 data = notch.snapshot(infos)
             data['token'] = self.app.TOKEN
             return self.respond(data)
+        if path == '/api/notes':
+            try:
+                return self.respond({'notes': self.app.read_notes()})
+            except (ValueError, OSError) as error:
+                return self.respond({'error': str(error)}, 400)
         if path == '/api/update':
             return self.respond(self.app.updater.public())
         if path == '/api/teams':
@@ -144,6 +149,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/projects/remove':
                 self.app.remove_project(payload.get('id'))
                 return self.respond({'ok': True})
+            if path == '/api/notes/add':
+                return self.respond({'notes': self.app.add_note(payload.get('text'), payload.get('kind'))}, 201)
+            if path == '/api/notes/done':
+                return self.respond({'notes': self.app.set_note_done(payload.get('id'), payload.get('done'))})
+            if path == '/api/notes/remove':
+                return self.respond({'notes': self.app.remove_note(payload.get('id'))})
             if path == '/api/folders':
                 return self.respond(self.app.folder_choices(payload.get('path')))
             if path == '/api/update/install':

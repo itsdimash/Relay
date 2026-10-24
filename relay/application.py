@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import threading
 
-from . import attachments, git_ops, history, lifecycle, providers, recovery, registry, reports
+from . import attachments, git_ops, history, lifecycle, notes, providers, recovery, registry, reports
 from . import contracts
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
@@ -84,6 +84,13 @@ class Application:
     write_projects = registry.write_projects
     remove_project = registry.remove_project
     folder_choices = staticmethod(registry.folder_choices)
+
+    # Quick notes and to-dos shown in the notch panel.
+    read_notes = notes.read_notes
+    write_notes = notes.write_notes
+    add_note = notes.add_note
+    set_note_done = notes.set_done
+    remove_note = notes.remove_note
 
     # Image validation and task-scoped attachment access.
     decode_images = staticmethod(attachments.decode_images)

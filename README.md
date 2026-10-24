@@ -79,6 +79,7 @@ Move the pointer to the top centre of your screen, where the notch is, and a dar
 
 - **Double-tap the right Command key** (⌘) opens the panel in any app and keeps it open; double-tap again, press Escape, or choose **View → Show or Hide Notch Panel** to close it. A Command shortcut such as ⌘C does not count.
 - **View → Open Notch Panel from Screen Top** turns the hover trigger off and on.
+- **Notes:** the **Notes** tab at the bottom of the panel keeps quick notes and to-dos. Type and press **Enter** to save a note, or **⌘ Enter** to save a to-do you can tick off. Opening the panel with the double-tap goes straight to the note field. The panel stays open while you type, and Escape closes it. Notes are saved in `notes.json` in Relay's data folder, and a waiting plan always switches the panel back to the task so you never miss an approval.
 - While it is on, closing the main window leaves Relay running so the panel keeps working; click the Dock icon to bring the window back, or press Command-Q to quit.
 - The panel is a page served by the local engine at `/notch`, so you can also open `http://127.0.0.1:48765/notch` in a browser.
 

@@ -59,6 +59,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 @property(nonatomic, strong) NSTimer *frameTimer;
 @property(nonatomic, strong) NSScreen *screen;
 @property(nonatomic) BOOL sticky;   // opened with the keyboard: stays until toggled again
+@property(nonatomic) BOOL holding;  // the person is typing a note: do not close because the pointer left
 @property(nonatomic) BOOL commandDown;
 @property(nonatomic) BOOL commandTapValid;
 @property(nonatomic) CFAbsoluteTime commandPressedAt;
@@ -237,6 +238,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     self.pinned = NO;
     self.sticky = NO;
     self.hovered = NO;
+    self.holding = NO;
     if (!self.shown) return;
     self.shown = NO;
     __weak RelayNotchPanel *weakSelf = self;
@@ -256,6 +258,10 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     self.pinned = YES;
     self.sticky = YES;
     [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation]];
+    // Opened on purpose from the keyboard: take the keys so the person can start typing a note at once.
+    [self.window makeKeyWindow];
+    [self.window makeFirstResponder:self.webView];
+    [self.webView evaluateJavaScript:@"window.relayNotesFocus && window.relayNotesFocus()" completionHandler:nil];
 }
 
 - (void)showPinned {
@@ -273,7 +279,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     __weak RelayNotchPanel *weakSelf = self;
     self.doneTimer = [NSTimer scheduledTimerWithTimeInterval:DoneVisibleSeconds repeats:NO block:^(NSTimer *timer) {
         RelayNotchPanel *strongSelf = weakSelf;
-        if (!strongSelf || strongSelf.pinned) return;
+        if (!strongSelf || strongSelf.pinned || strongSelf.holding) return;
         if (![strongSelf pointerIsNearPanel]) [strongSelf hideAnimated:YES];
     }];
 }
@@ -363,6 +369,10 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
             [self cancelTimer:&_hideTimer];
             return;
         }
+        if (self.holding) {
+            [self cancelTimer:&_hideTimer];
+            return;
+        }
         // Opened with the keyboard: it stays until the same shortcut, Escape, or Open Relay.
         if (self.sticky) return;
         // Opened because something needs the person: wait until they have looked at it.
@@ -399,7 +409,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         RelayNotchPanel *strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf.hideTimer = nil;
-        if (![strongSelf pointerIsNearPanel]) [strongSelf hideAnimated:YES];
+        if (!strongSelf.holding && ![strongSelf pointerIsNearPanel]) [strongSelf hideAnimated:YES];
     }];
 }
 
@@ -428,6 +438,13 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     } else if ([type isEqualToString:@"attention"]) {
         if ([body[@"keep"] boolValue]) [self showPinned];
         else [self peek];
+    } else if ([type isEqualToString:@"hold"]) {
+        // The note field has the keyboard: keep the panel open until typing stops or Escape.
+        self.holding = [body[@"on"] boolValue];
+        if (self.holding) {
+            [self cancelTimer:&_hideTimer];
+            [self.window makeKeyWindow];
+        }
     } else if ([type isEqualToString:@"settle"]) {
         // The question was answered somewhere else, so the panel no longer needs to stay.
         self.pinned = NO;

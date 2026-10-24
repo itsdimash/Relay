@@ -36,6 +36,11 @@ let elapsedBase = 0;
 let elapsedAt = 0;
 let notified = '';
 let busy = false;
+let view = 'task';
+let notes = [];
+let noteBusy = false;
+let inputFocused = false;
+let holding = false;
 
 const format = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
@@ -74,6 +79,7 @@ function render(run) {
   $('approval').hidden = !plan;
   if (plan) $('panel').dataset.plan = '1';
   else delete $('panel').dataset.plan;
+  if (plan && view === 'notes') setView('task');
   if (plan) {
     $('planSummary').textContent = plan.summary;
     $('planChecks').replaceChildren(...plan.checks.map(check => {
@@ -115,6 +121,7 @@ function notifyNative(run) {
   // A task that finished before the app opened is old news; one that waits for the person is not.
   if (startup && !needsYou) return;
   held = needsYou;
+  if (view === 'notes' && !inputFocused) setView('task');
   tell({ type: 'attention', keep: needsYou });
 }
 
@@ -156,13 +163,142 @@ async function decide(path, body) {
   }
 }
 
+// Notes and to-dos. Enter saves a note, Command-Enter saves a to-do.
+function setView(next) {
+  if (next === 'notes' && current?.plan) next = 'task'; // a waiting plan always comes first
+  view = next;
+  $('panel').dataset.view = view;
+  $('tabTask').setAttribute('aria-selected', String(view === 'task'));
+  $('tabNotes').setAttribute('aria-selected', String(view === 'notes'));
+  if (view === 'notes') {
+    $('noteInput').focus();
+    loadNotes();
+  } else {
+    $('noteInput').blur();
+  }
+  syncHold();
+}
+
+// While the person is typing, the panel must not close because the pointer moved away.
+function syncHold() {
+  const want = view === 'notes' && inputFocused;
+  if (want === holding) return;
+  holding = want;
+  tell({ type: 'hold', on: want });
+}
+
+function noteItem(note) {
+  const li = document.createElement('li');
+  li.className = `note ${note.kind}${note.done ? ' done' : ''}`;
+  let lead;
+  if (note.kind === 'todo') {
+    lead = document.createElement('input');
+    lead.type = 'checkbox';
+    lead.checked = !!note.done;
+    lead.setAttribute('aria-label', `Done: ${note.text}`);
+    lead.addEventListener('change', () => changeNotes('/api/notes/done', { id: note.id, done: lead.checked }));
+  } else {
+    lead = document.createElement('span');
+    lead.classList.add('note-dot');
+  }
+  lead.classList.add('note-lead');
+  const text = document.createElement('span');
+  text.className = 'note-text';
+  text.textContent = note.text;
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'note-remove';
+  remove.textContent = '×';
+  remove.setAttribute('aria-label', `Delete: ${note.text}`);
+  remove.addEventListener('click', () => changeNotes('/api/notes/remove', { id: note.id }));
+  li.append(lead, text, remove);
+  return li;
+}
+
+function renderNotes() {
+  const list = $('noteList');
+  const top = list.scrollTop;
+  const ordered = [...notes].sort((a, b) => Number(!!a.done) - Number(!!b.done)); // open items first
+  if (ordered.length) {
+    list.replaceChildren(...ordered.map(noteItem));
+  } else {
+    const empty = document.createElement('li');
+    empty.className = 'note-empty';
+    empty.textContent = 'Nothing yet.';
+    list.replaceChildren(empty);
+  }
+  list.scrollTop = top;
+  const open = notes.filter(note => note.kind === 'todo' && !note.done).length;
+  $('noteCount').textContent = String(open);
+  $('noteCount').hidden = open === 0;
+}
+
+async function loadNotes() {
+  try {
+    const data = await fetch('/api/notes', { cache: 'no-store' }).then(r => r.json());
+    if (Array.isArray(data.notes)) {
+      notes = data.notes;
+      renderNotes();
+    }
+  } catch (_) {
+    /* The next poll will bring the engine back; notes keep their last list. */
+  }
+}
+
+async function changeNotes(path, body) {
+  $('noteError').textContent = '';
+  try {
+    notes = (await post(path, body)).notes;
+    renderNotes();
+  } catch (error) {
+    $('noteError').textContent = error.message;
+    loadNotes();
+  }
+}
+
+async function addNote(kind) {
+  const text = $('noteInput').value.trim();
+  if (!text || noteBusy) return;
+  noteBusy = true;
+  $('noteError').textContent = '';
+  try {
+    notes = (await post('/api/notes/add', { text, kind })).notes;
+    $('noteInput').value = '';
+    renderNotes();
+    $('noteList').scrollTop = 0;
+  } catch (error) {
+    $('noteError').textContent = error.message;
+  } finally {
+    noteBusy = false;
+  }
+}
+
+$('tabTask').addEventListener('click', () => setView('task'));
+$('tabNotes').addEventListener('click', () => setView('notes'));
+$('noteInput').addEventListener('focus', () => { inputFocused = true; syncHold(); });
+$('noteInput').addEventListener('blur', () => { inputFocused = false; syncHold(); });
+$('noteInput').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.isComposing) return; // Escape bubbles up and hides the panel
+  event.preventDefault();
+  addNote(event.metaKey || event.ctrlKey ? 'todo' : 'note');
+});
+// The app calls this when the person opens the panel with the keyboard, so they can start typing at once.
+window.relayNotesFocus = () => {
+  if (!current?.plan) setView('notes');
+};
+
 $('approve').addEventListener('click', () => current?.plan && decide('/api/approve-plan', { id: current.id, plan_id: current.plan.id }));
 $('reject').addEventListener('click', () => current?.plan && decide('/api/stop', { id: current.id }));
 for (const id of ['open', 'open2']) $(id).addEventListener('click', () => tell({ type: 'open' }));
-document.addEventListener('keydown', event => event.key === 'Escape' && tell({ type: 'hide' }));
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  $('noteInput').blur(); // lets go of the hold before the panel hides
+  tell({ type: 'hide' });
+});
 
 room.start();
 render(null);
+loadNotes();
 poll();
 setInterval(poll, 1000);
 setInterval(tickTimer, 1000);

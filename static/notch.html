@@ -32,7 +32,17 @@
       </div>
       <p id="approvalError" class="error" role="alert"></p>
     </div>
+    <section id="notes" class="notes" aria-label="Notes and to-dos">
+      <input id="noteInput" class="note-input" type="text" maxlength="500" placeholder="Write a note…" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="New note">
+      <p class="note-hint">Enter saves a note · ⌘ Enter saves a to-do</p>
+      <ul id="noteList" class="note-list"></ul>
+      <p id="noteError" class="error" role="alert"></p>
+    </section>
     <footer class="foot">
+      <div class="tabs" role="tablist" aria-label="Panel view">
+        <button type="button" class="tab" role="tab" id="tabTask" aria-selected="true">Task</button>
+        <button type="button" class="tab" role="tab" id="tabNotes" aria-selected="false">Notes<span id="noteCount" class="count" hidden></span></button>
+      </div>
       <button type="button" class="btn quiet" id="open">Open Relay</button>
     </footer>
   </section>
