@@ -39,6 +39,7 @@ CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache" xcrun clang \
   -mmacosx-version-min=13.0 \
   -framework Cocoa \
   -framework WebKit \
+  -framework QuartzCore \
   "$PROJECT_ROOT/packaging/RelayNativeApp.m" \
   "$PROJECT_ROOT/packaging/RelayNotchPanel.m" \
   -o "$CONTENTS/MacOS/Relay"
