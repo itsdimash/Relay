@@ -1,4 +1,5 @@
 from http.server import ThreadingHTTPServer
+import datetime as dt
 import importlib.util
 import json
 import os
@@ -9,6 +10,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+import zipfile
 import urllib.error
 import urllib.request
 
@@ -120,30 +122,30 @@ class DeliverShelfTests(DeliverTestCase):
         self.assertEqual([item['id'] for item in app.deliver_list()], ids[2:])
 
     def test_the_after_drop_choice_is_kept_and_defaults_to_keeping_files(self):
-        self.assertEqual(app.deliver_settings(), {'remove_after_drop': False, 'auto_catch': False})
-        self.assertEqual(app.set_deliver_settings(True), {'remove_after_drop': True, 'auto_catch': False})
-        self.assertEqual(app.deliver_settings(), {'remove_after_drop': True, 'auto_catch': False})
+        self.assertEqual(app.deliver_settings(), {'remove_after_drop': False, 'auto_catch': False, 'expire_hours': 0})
+        self.assertEqual(app.set_deliver_settings(True), {'remove_after_drop': True, 'auto_catch': False, 'expire_hours': 0})
+        self.assertEqual(app.deliver_settings(), {'remove_after_drop': True, 'auto_catch': False, 'expire_hours': 0})
         for bad in ('yes', 1, None):
             with self.assertRaises(ValueError):
                 app.set_deliver_settings(bad)
         self.assertTrue(app.deliver_settings()['remove_after_drop'])
 
     def test_each_choice_changes_alone(self):
-        self.assertEqual(app.set_deliver_settings(auto_catch=True), {'remove_after_drop': False, 'auto_catch': True})
-        self.assertEqual(app.set_deliver_settings(remove_after_drop=True), {'remove_after_drop': True, 'auto_catch': True})
-        self.assertEqual(app.set_deliver_settings(auto_catch=False), {'remove_after_drop': True, 'auto_catch': False})
+        self.assertEqual(app.set_deliver_settings(auto_catch=True), {'remove_after_drop': False, 'auto_catch': True, 'expire_hours': 0})
+        self.assertEqual(app.set_deliver_settings(remove_after_drop=True), {'remove_after_drop': True, 'auto_catch': True, 'expire_hours': 0})
+        self.assertEqual(app.set_deliver_settings(auto_catch=False), {'remove_after_drop': True, 'auto_catch': False, 'expire_hours': 0})
         for bad in ({'auto_catch': 'yes'}, {'auto_catch': 1}, {'remove_after_drop': True, 'auto_catch': 'no'}, {}):
             with self.assertRaises(ValueError):
                 app.set_deliver_settings(**bad)
-        self.assertEqual(app.deliver_settings(), {'remove_after_drop': True, 'auto_catch': False})
+        self.assertEqual(app.deliver_settings(), {'remove_after_drop': True, 'auto_catch': False, 'expire_hours': 0})
 
     def test_a_damaged_settings_file_means_the_defaults(self):
         app.DATA.mkdir(parents=True)
         (app.DATA / 'deliver-settings.json').write_text('{oops')
-        self.assertEqual(app.deliver_settings(), {'remove_after_drop': False, 'auto_catch': False})
+        self.assertEqual(app.deliver_settings(), {'remove_after_drop': False, 'auto_catch': False, 'expire_hours': 0})
         (app.DATA / 'deliver-settings.json').write_text('{"remove_after_drop": "yes", "auto_catch": true}')
-        self.assertEqual(app.deliver_settings(), {'remove_after_drop': False, 'auto_catch': True})
-        self.assertEqual(app.set_deliver_settings(True), {'remove_after_drop': True, 'auto_catch': True})
+        self.assertEqual(app.deliver_settings(), {'remove_after_drop': False, 'auto_catch': True, 'expire_hours': 0})
+        self.assertEqual(app.set_deliver_settings(True), {'remove_after_drop': True, 'auto_catch': True, 'expire_hours': 0})
 
     def test_unicode_names_survive(self):
         app.add_deliver([self.make('Отчёт · 日本語.pdf')])
@@ -159,6 +161,180 @@ class DeliverShelfTests(DeliverTestCase):
         with self.assertRaises(ValueError):
             app.clear_deliver()
         self.assertEqual((app.DATA / 'deliver.json').read_text(), '{not json')
+
+
+class DeliverZipTests(DeliverTestCase):
+    """Several files become one zip that sits on the shelf like any other file."""
+
+    def ids(self):
+        return [item['id'] for item in app.deliver_list()]
+
+    def test_files_and_a_folder_are_packed_into_one_zip_on_the_shelf(self):
+        a, b = self.make('a.txt', 'first'), self.make('b.txt', 'second')
+        sub = self.folder / 'Photos'
+        (sub / 'deep').mkdir(parents=True)
+        (sub / 'one.jpg').write_text('jpg')
+        (sub / 'deep' / 'two.jpg').write_text('jpg2')
+        (self.folder / 'Empty').mkdir()
+        app.add_deliver([a, b, str(sub), str(self.folder / 'Empty')])
+        result = app.zip_deliver(self.ids())
+        zip_path = Path(result['zip'])
+        self.assertTrue(zip_path.is_file())
+        self.assertEqual(result['items'][0]['path'], str(zip_path))  # the newest item on the shelf
+        self.assertEqual(len(result['items']), 5)  # the originals stay on the shelf
+        with zipfile.ZipFile(zip_path) as archive:
+            names = set(archive.namelist())
+            self.assertEqual(archive.read('a.txt'), b'first')
+            self.assertEqual(archive.read('Photos/deep/two.jpg'), b'jpg2')
+        self.assertTrue({'a.txt', 'b.txt', 'Photos/', 'Photos/one.jpg', 'Photos/deep/', 'Empty/'} <= names)
+        self.assertEqual((self.folder / 'a.txt').read_text(), 'first')
+
+    def test_a_single_file_gets_its_own_name_and_a_group_a_dated_one(self):
+        app.add_deliver([self.make('report.pdf'), self.make('other.txt')])
+        single = Path(app.zip_deliver([app.deliver_list()[0]['id']])['zip'])
+        self.assertEqual(single.name, 'report.pdf.zip')
+        group = Path(app.zip_deliver(self.ids()[:3])['zip'])
+        self.assertRegex(group.name, r'^Files \d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d\.zip$')
+        self.assertNotEqual(single.parent, group.parent)
+
+    def test_files_with_the_same_name_from_different_folders_both_go_in(self):
+        other = self.folder / 'other'
+        other.mkdir()
+        (other / 'same.txt').write_text('two')
+        app.add_deliver([self.make('same.txt', 'one'), str(other / 'same.txt')])
+        with zipfile.ZipFile(app.zip_deliver(self.ids())['zip']) as archive:
+            self.assertEqual(sorted(archive.namelist()), ['same (2).txt', 'same.txt'])
+
+    def test_a_file_dated_before_1980_does_not_stop_the_zip(self):
+        path = self.make('ancient.txt')
+        os.utime(path, (0, 0))
+        app.add_deliver([path])
+        with zipfile.ZipFile(app.zip_deliver(self.ids())['zip']) as archive:
+            self.assertEqual(archive.namelist(), ['ancient.txt'])
+
+    def test_missing_files_are_skipped_and_nothing_to_zip_is_an_error(self):
+        gone, kept = self.make('gone.txt'), self.make('kept.txt')
+        app.add_deliver([gone, kept])
+        both = self.ids()
+        os.remove(gone)
+        with zipfile.ZipFile(app.zip_deliver(both)['zip']) as archive:
+            self.assertEqual(archive.namelist(), ['kept.txt'])
+        for bad in (None, [], [1], 'abc', ['no-such-id']):
+            with self.assertRaises(ValueError):
+                app.zip_deliver(bad)
+        os.remove(kept)
+        with self.assertRaises(ValueError):
+            app.zip_deliver(both)
+
+    def test_the_zip_is_deleted_when_it_leaves_the_shelf_but_other_files_never_are(self):
+        original = self.make('keep.txt')
+        app.add_deliver([original])
+        zip_path = Path(app.zip_deliver(self.ids())['zip'])
+        zip_item = next(item for item in app.deliver_list() if item['path'] == str(zip_path))
+        app.remove_deliver(zip_item['id'])
+        self.assertFalse(zip_path.exists())
+        self.assertFalse(zip_path.parent.exists())
+        app.clear_deliver()
+        self.assertTrue(Path(original).exists())
+
+    def test_clearing_the_shelf_deletes_its_zips_and_a_moved_zip_is_left_alone(self):
+        app.add_deliver([self.make('a.txt')])
+        first = Path(app.zip_deliver(self.ids())['zip'])
+        second = Path(app.zip_deliver(self.ids()[1:])['zip'])
+        moved = self.folder / 'moved.zip'
+        second.rename(moved)  # a drop in Finder moved it away
+        app.clear_deliver()
+        self.assertFalse(first.exists())
+        self.assertTrue(moved.exists())
+        self.assertFalse(second.parent.exists())
+
+    def test_a_full_shelf_leaves_no_zip_behind(self):
+        app.add_deliver([self.make('a.txt')])
+        app.write_deliver_items(app.read_deliver_items() + [{'id': str(n), 'path': str(self.folder), 'added': ''} for n in range(deliver.MAX_ITEMS - 1)])
+        with self.assertRaises(ValueError):
+            app.zip_deliver([app.read_deliver_items()[0]['id']])
+        self.assertEqual(list((app.DATA / 'deliver-zips').iterdir()), [])
+
+
+class DeliverExpiryTests(DeliverTestCase):
+    """Items can leave the shelf by themselves after a chosen time; the files stay where they are."""
+
+    def put(self, name, hours_ago):
+        path = self.make(name)
+        app.add_deliver([path])
+        items = app.read_deliver_items()
+        items[0]['added'] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours_ago)).isoformat()
+        app.write_deliver_items(items)
+        return path
+
+    def test_the_choices_are_checked_and_kept(self):
+        self.assertEqual(app.deliver_settings()['expire_hours'], 0)
+        for hours in (1, 6, 24, 168, 0):
+            self.assertEqual(app.set_deliver_settings(expire_hours=hours)['expire_hours'], hours)
+        for bad in (2, -1, '24', 1.5, True, 10_000):
+            with self.assertRaises(ValueError):
+                app.set_deliver_settings(expire_hours=bad)
+        self.assertEqual(app.deliver_settings()['expire_hours'], 0)
+        (app.DATA / 'deliver-settings.json').write_text('{"expire_hours": 5}')
+        self.assertEqual(app.deliver_settings()['expire_hours'], 0)
+
+    def test_nothing_expires_unless_a_time_is_chosen(self):
+        self.put('old.txt', 1000)
+        self.assertEqual(app.expire_deliver(), [])
+        self.assertEqual([item['name'] for item in app.deliver_list()], ['old.txt'])
+
+    def test_items_older_than_the_time_leave_the_shelf_and_the_files_stay(self):
+        old = self.put('old.txt', 30)
+        fresh = self.put('fresh.txt', 2)
+        recent = self.put('recent.txt', 0)
+        app.set_deliver_settings(expire_hours=24)
+        self.assertEqual(len(app.expire_deliver()), 1)
+        self.assertEqual(sorted(item['name'] for item in app.deliver_list()), ['fresh.txt', 'recent.txt'])
+        for path in (old, fresh, recent):
+            self.assertTrue(Path(path).exists())
+        app.set_deliver_settings(expire_hours=1)
+        self.assertEqual(len(app.expire_deliver()), 1)
+        self.assertEqual([item['name'] for item in app.deliver_list()], ['recent.txt'])
+
+    def test_an_item_without_a_readable_time_is_never_expired(self):
+        path = self.make('odd.txt')
+        app.write_deliver_items([{'id': 'x', 'path': path}, {'id': 'y', 'path': path, 'added': 'not a date'}, {'id': 'z', 'path': path, 'added': None}])
+        app.set_deliver_settings(expire_hours=1)
+        self.assertEqual(app.expire_deliver(), [])
+        self.assertEqual(len(app.read_deliver_items()), 3)
+
+    def test_an_old_zip_is_deleted_with_its_item(self):
+        app.add_deliver([self.make('a.txt')])
+        zip_path = Path(app.zip_deliver([app.read_deliver_items()[0]['id']])['zip'])
+        items = app.read_deliver_items()
+        items[0]['added'] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)).isoformat()
+        app.write_deliver_items(items)
+        app.set_deliver_settings(expire_hours=1)
+        app.expire_deliver()
+        self.assertFalse(zip_path.exists())
+
+    def test_a_shelf_list_that_cannot_be_read_is_left_alone(self):
+        app.DATA.mkdir(parents=True)
+        (app.DATA / 'deliver.json').write_text('{oops')
+        app.set_deliver_settings(expire_hours=1)
+        self.assertEqual(app.expire_deliver(), [])
+        self.assertEqual((app.DATA / 'deliver.json').read_text(), '{oops')
+
+    def test_the_watcher_thread_lets_old_items_go(self):
+        self.put('old.txt', 5)
+        app.set_deliver_settings(expire_hours=1)
+        app.SHUTTING_DOWN.clear()
+        try:
+            thread = app.watch_downloads(interval=0.02)
+            for _ in range(100):
+                if not app.deliver_list():
+                    break
+                time.sleep(0.05)
+            self.assertEqual(app.deliver_list(), [])
+        finally:
+            app.SHUTTING_DOWN.set()
+            thread.join(2)
+            app.SHUTTING_DOWN.clear()
 
 
 class DeliverCatchTests(DeliverTestCase):
@@ -364,10 +540,10 @@ class DeliverHTTPTests(DeliverTestCase):
         status, data = self.post('/api/deliver/remove', {'ids': ids[:2]})
         self.assertEqual((status, [item['id'] for item in data['items']]), (200, ids[2:]))
         status, data = self.post('/api/deliver/settings', {'remove_after_drop': True})
-        self.assertEqual((status, data['settings']), (200, {'remove_after_drop': True, 'auto_catch': False}))
+        self.assertEqual((status, data['settings']), (200, {'remove_after_drop': True, 'auto_catch': False, 'expire_hours': 0}))
         with urllib.request.urlopen(self.base + '/api/deliver') as response:
             listing = json.loads(response.read())
-        self.assertEqual(listing['settings'], {'remove_after_drop': True, 'auto_catch': False})
+        self.assertEqual(listing['settings'], {'remove_after_drop': True, 'auto_catch': False, 'expire_hours': 0})
         self.assertEqual([item['id'] for item in listing['items']], ids[2:])
         status, _ = self.post('/api/deliver/settings', {'remove_after_drop': 'yes'})
         self.assertEqual(status, 400)
@@ -377,9 +553,9 @@ class DeliverHTTPTests(DeliverTestCase):
 
     def test_auto_catch_is_switched_through_the_api_and_a_problem_is_reported(self):
         status, data = self.post('/api/deliver/settings', {'auto_catch': True})
-        self.assertEqual((status, data['settings']), (200, {'remove_after_drop': False, 'auto_catch': True}))
+        self.assertEqual((status, data['settings']), (200, {'remove_after_drop': False, 'auto_catch': True, 'expire_hours': 0}))
         status, data = self.post('/api/deliver/settings', {'remove_after_drop': True})
-        self.assertEqual(data['settings'], {'remove_after_drop': True, 'auto_catch': True})
+        self.assertEqual(data['settings'], {'remove_after_drop': True, 'auto_catch': True, 'expire_hours': 0})
         self.assertEqual(self.post('/api/deliver/settings', {'auto_catch': 'yes'})[0], 400)
         self.assertEqual(self.post('/api/deliver/settings', {})[0], 400)
         with urllib.request.urlopen(self.base + '/api/deliver') as response:
@@ -391,6 +567,21 @@ class DeliverHTTPTests(DeliverTestCase):
                 self.assertEqual(json.loads(response.read())['problem'], 'denied')
         finally:
             app.catcher.problem = old
+
+    def test_zip_and_expiry_through_the_api(self):
+        _, data = self.post('/api/deliver/add', {'paths': [self.make('a.txt'), self.make('b.txt')]})
+        ids = [item['id'] for item in data['items']]
+        status, data = self.post('/api/deliver/zip', {'ids': ids})
+        self.assertEqual(status, 201)
+        self.assertTrue(data['zip'].endswith('.zip') and Path(data['zip']).is_file())
+        self.assertEqual(data['items'][0]['path'], data['zip'])
+        self.assertEqual(self.post('/api/deliver/zip', {'ids': []})[0], 400)
+        self.assertEqual(self.post('/api/deliver/zip', {})[0], 400)
+        self.assertEqual(self.post('/api/deliver/zip', {'ids': ids}, token='wrong')[0], 403)
+        status, data = self.post('/api/deliver/settings', {'expire_hours': 24})
+        self.assertEqual((status, data['settings']['expire_hours']), (200, 24))
+        self.assertEqual(self.post('/api/deliver/settings', {'expire_hours': 7})[0], 400)
+        self.assertEqual(self.post('/api/deliver/settings', {'expire_hours': 6, 'auto_catch': True})[1]['settings']['expire_hours'], 6)
 
     def test_changes_need_the_token(self):
         status, _ = self.post('/api/deliver/add', {'paths': [self.make('sneaky.txt')]}, token='wrong')
@@ -443,7 +634,26 @@ class DeliverPanelTests(unittest.TestCase):
         for problem in ('denied', 'unreadable'):
             self.assertIn(f'{problem}:', script)
         # New downloads arrive on any tab, so the shelf is refreshed whenever Auto-catch is on.
-        self.assertIn("(view === 'deliver' || deliverSettings.auto_catch) && mode !== 'pill'", script)
+        self.assertIn("(view === 'deliver' || deliverSettings.auto_catch || deliverSettings.expire_hours) && mode !== 'pill'", script)
+
+    def test_zip_and_the_time_limit_have_their_controls(self):
+        html = (ROOT / 'static' / 'notch.html').read_text()
+        for element in ('id="deliverZip"', 'id="deliverExpire"', 'id="deliverOptionsButton"', 'id="deliverOptions"'):
+            self.assertIn(element, html)
+        # The folded options are reachable by keyboard and say whether they are open; the icon button has a name.
+        self.assertIn('aria-expanded="false"', html)
+        self.assertIn('aria-label="Shelf options"', html)
+        self.assertRegex(html, r'id="deliverOptions" class="deliver-options" hidden')
+        script = (ROOT / 'static' / 'notch.js').read_text()
+        zipper = script.split("$('deliverZip').addEventListener", 1)[1].split("$('deliverCatch').addEventListener", 1)[0]
+        self.assertIn("post('/api/deliver/zip', { ids: picked.map(item => item.id) })", zipper)
+        self.assertIn('selected.size ? ready.filter', zipper)  # the picked files, or all of them when none is picked
+        self.assertIn('if (zipping || !picked.length) return;', zipper)
+        self.assertIn('zipping = false;', zipper)  # whatever happens, the button is usable again
+        # The choices offered match what the engine accepts.
+        engine = importlib.import_module('relay.deliver')
+        offered = [int(hours) for hours in re.findall(r'\[(\d+), \'', script.split('const EXPIRY', 1)[1].split('\n', 1)[0])]
+        self.assertEqual(tuple(offered), engine.EXPIRY_CHOICES)
 
     def test_the_native_panel_keeps_only_its_warnings_in_the_log(self):
         native = (ROOT / 'packaging' / 'RelayNotchPanel.m').read_text()

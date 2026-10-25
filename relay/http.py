@@ -176,7 +176,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/deliver/remove':
                 return self.respond({'items': self.app.remove_deliver(payload.get('ids', payload.get('id')))})
             if path == '/api/deliver/settings':
-                return self.respond({'settings': self.app.set_deliver_settings(payload.get('remove_after_drop'), payload.get('auto_catch'))})
+                return self.respond({'settings': self.app.set_deliver_settings(payload.get('remove_after_drop'), payload.get('auto_catch'), payload.get('expire_hours'))})
+            if path == '/api/deliver/zip':
+                return self.respond(self.app.zip_deliver(payload.get('ids')), 201)
             if path == '/api/deliver/clear':
                 return self.respond({'items': self.app.clear_deliver()})
             if path == '/api/folders':

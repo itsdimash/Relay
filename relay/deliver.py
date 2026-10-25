@@ -3,18 +3,22 @@
 Only the paths are saved (one small JSON file in the app's data folder). The files themselves are never copied,
 moved or read; the panel just remembers where they are, so the shelf costs no disk space and nothing is duplicated.
 """
+import datetime as dt
 import json
 import os
+import shutil
 import threading
 import uuid
+import zipfile
 from pathlib import Path
 
 from .reports import now
 
 MAX_ITEMS = 100
 MAX_PATH = 4096
-DEFAULT_SETTINGS = {'remove_after_drop': False, 'auto_catch': False}
-SETTING_KEYS = tuple(DEFAULT_SETTINGS)
+DEFAULT_SETTINGS = {'remove_after_drop': False, 'auto_catch': False, 'expire_hours': 0}
+FLAG_KEYS = ('remove_after_drop', 'auto_catch')
+EXPIRY_CHOICES = (0, 1, 6, 24, 168)  # hours a file may stay on the shelf; 0 means as long as you like
 # Names a browser or downloader gives a file while it is still arriving. Hidden files (a dot first) are skipped too.
 INCOMPLETE_SUFFIXES = ('.crdownload', '.download', '.part', '.partial', '.tmp', '.temp', '.opdownload', '.aria2')
 
@@ -100,14 +104,118 @@ def remove_item(app, item_ids):
         if len(remaining) == len(items):
             raise ValueError('That item is no longer on the shelf.')
         app.write_deliver_items(remaining)
+        forget_files(app, [item for item in items if item['id'] in ids])
         return [describe(item) for item in remaining]
 
 
 def clear_items(app):
     with app.LOCK:
-        app.read_deliver_items()  # an unreadable file is reported, never overwritten
+        items = app.read_deliver_items()  # an unreadable file is reported, never overwritten
         app.write_deliver_items([])
+        forget_files(app, items)
         return []
+
+
+def zips_folder(app):
+    return app.DATA / 'deliver-zips'
+
+
+def forget_files(app, items):
+    """A zip that Relay made is deleted once it leaves the shelf. Nothing else is ever deleted: a shelf item is only a path."""
+    root = os.path.normpath(zips_folder(app))
+    for item in items:
+        folder = os.path.dirname(item['path'])
+        if os.path.dirname(folder) != root:
+            continue
+        for remove, target in ((os.remove, item['path']), (os.rmdir, folder)):
+            try:
+                remove(target)
+            except OSError:
+                pass  # already moved away by a drop, or not empty: leave it
+
+
+def unique_name(name, used):
+    candidate, number = name, 1
+    stem, dot, extension = name.rpartition('.') if '.' in name.strip('.') else (name, '', '')
+    while candidate in used:
+        number += 1
+        candidate = f'{stem} ({number}){dot}{extension}'
+    used.add(candidate)
+    return candidate
+
+
+def add_to_zip(archive, source, name):
+    if not source.is_dir():
+        archive.write(source, name)
+        return
+    archive.write(source, name)  # the folder itself, so an empty one survives
+    for current, folders, files in os.walk(source):
+        folders.sort()
+        for entry in folders + sorted(files):
+            path = os.path.join(current, entry)
+            if not os.path.exists(path) or not (os.path.isdir(path) or os.path.isfile(path)):
+                continue  # a broken link or a socket has nothing to pack
+            archive.write(path, os.path.join(name, os.path.relpath(path, source)))
+
+
+def make_zip(app, item_ids):
+    """Pack the chosen shelf items (files and folders) into one zip and put it on the shelf, ready to be dragged out.
+
+    The originals stay where they are and on the shelf. The zip lives in the data folder and is deleted
+    when it is taken off the shelf.
+    """
+    if not isinstance(item_ids, list) or not item_ids or not all(isinstance(item_id, str) for item_id in item_ids):
+        raise ValueError('Choose what to zip.')
+    with app.LOCK:
+        chosen = [item for item in app.read_deliver_items() if item['id'] in item_ids]
+    sources = [Path(item['path']) for item in chosen if os.path.lexists(item['path'])]
+    if not sources:
+        raise ValueError('Those files are no longer there.')
+    folder = zips_folder(app) / uuid.uuid4().hex[:8]
+    name = f'{sources[0].name}.zip' if len(sources) == 1 else f'Files {dt.datetime.now():%Y-%m-%d %H.%M.%S}.zip'
+    target = folder / name
+    try:
+        folder.mkdir(parents=True)
+        used = set()
+        with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
+            for source in sources:
+                add_to_zip(archive, source, unique_name(source.name, used))
+        items = add_paths(app, [str(target)])
+    except OSError as error:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise ValueError(f'The zip could not be made: {error.strerror or error.__class__.__name__}.')
+    except ValueError:
+        shutil.rmtree(folder, ignore_errors=True)  # the shelf is full, or its list cannot be read
+        raise
+    return {'items': items, 'zip': os.path.normpath(target)}
+
+
+def expire_items(app, current=None):
+    """Take files that have been on the shelf longer than the chosen time off it. The files themselves are never touched."""
+    hours = read_settings(app)['expire_hours']
+    if not hours:
+        return []
+    limit = (current or dt.datetime.now(dt.timezone.utc)) - dt.timedelta(hours=hours)
+
+    def too_old(item):
+        try:
+            added = dt.datetime.fromisoformat(item['added'])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (added if added.tzinfo else added.replace(tzinfo=dt.timezone.utc)) < limit
+
+    with app.LOCK:
+        try:
+            items = app.read_deliver_items()
+        except ValueError:
+            return []
+        old = [item for item in items if too_old(item)]
+        if not old:
+            return []
+        gone = {item['id'] for item in old}
+        app.write_deliver_items([item for item in items if item['id'] not in gone])
+        forget_files(app, old)
+        return sorted(gone)
 
 
 def read_settings(app):
@@ -119,18 +227,24 @@ def read_settings(app):
     except (OSError, ValueError):
         return settings
     if isinstance(saved, dict):
-        for key in SETTING_KEYS:
+        for key in FLAG_KEYS:
             if isinstance(saved.get(key), bool):
                 settings[key] = saved[key]
+        if type(saved.get('expire_hours')) is int and saved['expire_hours'] in EXPIRY_CHOICES:
+            settings['expire_hours'] = saved['expire_hours']
     return settings
 
 
-def set_settings(app, remove_after_drop=None, auto_catch=None):
-    """Change one or both choices; a choice left out stays as it was."""
-    changes = {'remove_after_drop': remove_after_drop, 'auto_catch': auto_catch}
+def set_settings(app, remove_after_drop=None, auto_catch=None, expire_hours=None):
+    """Change one or more choices; a choice left out stays as it was."""
+    changes = {'remove_after_drop': remove_after_drop, 'auto_catch': auto_catch, 'expire_hours': expire_hours}
     changes = {key: value for key, value in changes.items() if value is not None}
-    if not changes or any(type(value) is not bool for value in changes.values()):
+    if not changes:
         raise ValueError('Choose on or off.')
+    if any(type(value) is not bool for key, value in changes.items() if key in FLAG_KEYS):
+        raise ValueError('Choose on or off.')
+    if 'expire_hours' in changes and (type(changes['expire_hours']) is not int or changes['expire_hours'] not in EXPIRY_CHOICES):
+        raise ValueError('Choose how long files may stay: never, 1, 6, 24 or 168 hours.')
     with app.LOCK:
         settings = dict(read_settings(app), **changes)
         app.DATA.mkdir(parents=True, exist_ok=True)
@@ -210,11 +324,12 @@ class Catcher:
 
 
 def watch_downloads(app, interval=2.0):
-    """Look at the Downloads folder every few seconds for as long as the engine runs."""
+    """Every few seconds, for as long as the engine runs: catch new downloads and let old shelf items go."""
     def watch():
         while not app.SHUTTING_DOWN.wait(interval):
             try:
                 app.catcher.step()
+                app.expire_deliver()
             except Exception:
                 app.catcher.problem = 'unreadable'  # one bad look must never end the watching
     thread = threading.Thread(target=watch, name='downloads-watcher', daemon=True)

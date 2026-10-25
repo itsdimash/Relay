@@ -75,9 +75,16 @@
       <div class="deliver-bar">
         <span id="deliverHint" class="deliver-hint" title="Click a file to select it. ⌘-click picks several, ⇧-click picks a range.">Drop files on the notch</span>
         <button type="button" class="chip" id="deliverAll" title="Drag all the files out at once">Drag all</button>
+        <button type="button" class="chip" id="deliverZip" title="Zip the selected files, or all of them when none is selected, into one file you can drag out">Zip</button>
+        <button type="button" class="chip icon" id="deliverOptionsButton" aria-label="Shelf options" aria-expanded="false" aria-controls="deliverOptions" title="Shelf options">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h7M15 6h2M3 14h2M10 14h7"/><circle cx="12.5" cy="6" r="2.2"/><circle cx="7.5" cy="14" r="2.2"/></svg>
+        </button>
+        <button type="button" class="chip quiet" id="deliverClear">Clear</button>
+      </div>
+      <div id="deliverOptions" class="deliver-options" hidden>
         <button type="button" class="chip quiet" id="deliverCatch" aria-pressed="false" title="Put each new download from your Downloads folder on the shelf by itself">Auto-catch</button>
         <button type="button" class="chip quiet" id="deliverAuto" aria-pressed="false" title="Take files off the shelf after you drop them somewhere">Auto-clear</button>
-        <button type="button" class="chip quiet" id="deliverClear">Clear</button>
+        <button type="button" class="chip quiet" id="deliverExpire" aria-pressed="false" title="How long a file stays on the shelf before it goes by itself. The file itself is never deleted. Click to change.">Keep: forever</button>
       </div>
       <p id="deliverNotice" class="deliver-notice" role="status" hidden></p>
       <p id="deliverEmpty" class="deliver-empty">Drag files here, then drag them out wherever you need them.</p>

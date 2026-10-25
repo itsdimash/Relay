@@ -105,6 +105,8 @@ class Application:
     clear_deliver = deliver.clear_items
     deliver_settings = deliver.read_settings
     set_deliver_settings = deliver.set_settings
+    zip_deliver = deliver.make_zip
+    expire_deliver = deliver.expire_items
     watch_downloads = deliver.watch_downloads
 
     # Image validation and task-scoped attachment access.

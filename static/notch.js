@@ -337,7 +337,8 @@ $('noteInput').addEventListener('keydown', event => {
 let selected = new Set(); // ids of the rows picked to be dragged together
 let lastPicked = '';
 let carrying = [];        // ids of the files that are being dragged out right now
-let deliverSettings = { remove_after_drop: false, auto_catch: false };
+let deliverSettings = { remove_after_drop: false, auto_catch: false, expire_hours: 0 };
+let zipping = false; // a zip is being made
 let deliverProblem = null; // why Auto-catch cannot read the Downloads folder, when it cannot
 
 function sizeText(bytes) {
@@ -441,9 +442,16 @@ const PROBLEMS = {
   unreadable: 'Relay cannot read your Downloads folder right now.',
 };
 
+const EXPIRY = [[0, 'forever'], [1, '1 hour'], [6, '6 hours'], [24, '1 day'], [168, '1 week']]; // hours a file may stay, as the engine allows
+
 function paintSettings() {
   $('deliverAuto').setAttribute('aria-pressed', String(!!deliverSettings.remove_after_drop));
   $('deliverCatch').setAttribute('aria-pressed', String(!!deliverSettings.auto_catch));
+  const keep = EXPIRY.find(([hours]) => hours === deliverSettings.expire_hours) || EXPIRY[0];
+  $('deliverExpire').textContent = `Keep: ${keep[1]}`;
+  $('deliverExpire').setAttribute('aria-pressed', String(keep[0] > 0));
+  // The options are folded away; the button shows when one of them is on.
+  $('deliverOptionsButton').toggleAttribute('data-active', !!(deliverSettings.remove_after_drop || deliverSettings.auto_catch || keep[0]));
   const problem = deliverSettings.auto_catch && deliverProblem ? PROBLEMS[deliverProblem] || PROBLEMS.unreadable : '';
   $('deliverNotice').textContent = problem;
   $('deliverNotice').hidden = !problem;
@@ -460,6 +468,8 @@ function renderDeliver() {
   $('deliverEmpty').hidden = deliver.length > 0;
   $('deliverHint').textContent = hintText();
   $('deliverAll').disabled = ready.size < 2;
+  $('deliverZip').disabled = zipping || !ready.size;
+  $('deliverZip').textContent = zipping ? 'Zipping…' : 'Zip';
   $('deliverClear').disabled = !deliver.length;
   $('deliverCount').textContent = String(ready.size);
   $('deliverCount').hidden = ready.size === 0;
@@ -470,7 +480,8 @@ async function loadDeliver() {
   try {
     const data = await fetch('/api/deliver', { cache: 'no-store' }).then(r => r.json());
     if (!Array.isArray(data.items)) return;
-    const valid = typeof data.settings?.remove_after_drop === 'boolean' && typeof data.settings?.auto_catch === 'boolean';
+    const valid = typeof data.settings?.remove_after_drop === 'boolean' && typeof data.settings?.auto_catch === 'boolean'
+      && Number.isInteger(data.settings?.expire_hours);
     const settings = valid ? data.settings : deliverSettings;
     const problem = typeof data.problem === 'string' ? data.problem : null;
     if (JSON.stringify([data.items, settings, problem]) === JSON.stringify([deliver, deliverSettings, deliverProblem])) return;
@@ -511,6 +522,36 @@ async function changeSetting(change) {
   }
 }
 $('deliverAuto').addEventListener('click', () => changeSetting({ remove_after_drop: !deliverSettings.remove_after_drop }));
+$('deliverExpire').addEventListener('click', () => {
+  const at = EXPIRY.findIndex(([hours]) => hours === deliverSettings.expire_hours);
+  changeSetting({ expire_hours: EXPIRY[(at + 1) % EXPIRY.length][0] });
+});
+$('deliverOptionsButton').addEventListener('click', () => {
+  const open = $('deliverOptions').hidden;
+  $('deliverOptions').hidden = !open;
+  $('deliverOptionsButton').setAttribute('aria-expanded', String(open));
+});
+// Zip: the picked files (all of them when none is picked) become one file on the shelf, which is then dragged out like any other.
+$('deliverZip').addEventListener('click', async () => {
+  const ready = deliver.filter(item => !item.missing);
+  const picked = selected.size ? ready.filter(item => selected.has(item.id)) : ready;
+  if (zipping || !picked.length) return;
+  zipping = true;
+  $('deliverError').textContent = '';
+  renderDeliver();
+  try {
+    const data = await post('/api/deliver/zip', { ids: picked.map(item => item.id) });
+    deliver = data.items;
+    selected = new Set(deliver.filter(item => item.path === data.zip).map(item => item.id));
+    lastPicked = [...selected][0] || '';
+    $('deliverList').scrollTop = 0;
+  } catch (error) {
+    $('deliverError').textContent = error.message;
+  } finally {
+    zipping = false;
+    renderDeliver();
+  }
+});
 $('deliverCatch').addEventListener('click', async () => {
   // The engine looks at the folder every couple of seconds; ask again after its first look to show a problem if there is one.
   if (await changeSetting({ auto_catch: !deliverSettings.auto_catch }) && deliverSettings.auto_catch) setTimeout(loadDeliver, 2600);
@@ -762,5 +803,5 @@ poll();
 setInterval(poll, 1000);
 setInterval(tickTimer, 1000);
 setInterval(tickProgress, 500);
-// A file may have been moved or deleted since, and with Auto-catch on new downloads arrive on any tab.
-setInterval(() => { if ((view === 'deliver' || deliverSettings.auto_catch) && mode !== 'pill') loadDeliver(); }, 3000);
+// A file may have been moved or deleted since; with Auto-catch or a time limit on, the shelf changes by itself on any tab.
+setInterval(() => { if ((view === 'deliver' || deliverSettings.auto_catch || deliverSettings.expire_hours) && mode !== 'pill') loadDeliver(); }, 3000);

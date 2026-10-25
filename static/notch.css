@@ -175,6 +175,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .chip[aria-pressed="true"] { color: var(--text); border-color: color-mix(in srgb, var(--brand) 65%, transparent); background: color-mix(in srgb, var(--brand) 26%, transparent); }
 .chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 #deliverAll:not(:disabled) { cursor: grab; }
+.chip.icon { display: inline-flex; align-items: center; padding: 3px 7px; }
+.chip.icon svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.chip.icon[data-active] { color: var(--brand); }
+.chip[aria-expanded="true"] { background: rgba(255, 255, 255, .16); }
+.deliver-options { flex: none; display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
 .deliver-notice { flex: none; margin: 0 0 4px; padding: 4px 9px; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--amber) 12%, transparent); color: var(--text); font-size: 10.5px; line-height: 1.35; }
 .deliver-empty { flex: 1 1 auto; min-height: 0; margin: 0 0 4px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 18px; border: 1.5px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 12px; }
 .deliver-empty[hidden] { display: none; }
