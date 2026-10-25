@@ -112,6 +112,11 @@ class ProcessControl:
                     self.emit(agent, 'log', line.rstrip()[:4000])
                     continue
                 typ = event.get('type', '')
+                if typ == 'rate_limit_event':
+                    try:
+                        self.app.limits.record_claude(event)
+                    except Exception:  # a reading is a nicety; it must never stop a task
+                        pass
                 if agent == 'Codex':
                     item = event.get('item', {})
                     if typ == 'item.completed' and item.get('type') == 'agent_message':

@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import threading
 
-from . import attachments, git_ops, history, lifecycle, notes, providers, recovery, registry, reports
+from . import attachments, git_ops, history, lifecycle, limits, notes, providers, recovery, registry, reports
 from . import contracts
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
@@ -27,6 +27,8 @@ class Application:
         self.ACTIVE = None
         self.SHUTTING_DOWN = threading.Event()
         self.updater = Updater()
+        # How much of each tool's usage limits is left; reads nothing until the first screen asks.
+        self.limits = limits.Limits(self.DATA / 'limits.json', providers.executable)
 
         class TaskRun(Run):
             app = self

@@ -86,6 +86,10 @@ Move the pointer to the notch and a small dark panel grows out of it, with icon 
 - While it is on, closing the main window leaves Relay running so the panel keeps working; click the Dock icon to bring the window back, or press Command-Q to quit.
 - The panel is a page served by the local engine at `/notch`, so you can also open `http://127.0.0.1:48765/notch` in a browser.
 
+### Usage left
+
+Relay shows how much of your 5-hour and weekly limits is left for each tool, in the dashboard (under the connection badges) and in the notch panel's Office. Claude Code only reports it while answering, so Relay takes the reading from its own Claude tasks and, when none is recent, asks Claude one tiny question (the cheapest model, no tools, an empty folder) at most every 15 minutes. That question counts against your Claude usage, and if your 5-hour window was not running it starts a new one. Set `RELAY_NO_CLAUDE_PROBE=1` to turn it off. Readings are kept between launches. Codex is asked through its app-server about once a minute. Both exist only on subscription sign-ins; with an API key the row stays empty. A reading older than 30 minutes shows its age.
+
 ### Provider logos
 
 The Claude and OpenAI (Codex) logos appear in the agent avatars on the Team cards and in the activity feed. They are the files `static/providers/claude.png` and `static/providers/openai.png`. To replace them, put `claude.svg` / `openai.svg` (or new `.png` files) in the same folder; an SVG takes priority over a PNG. If a file is missing, the avatar falls back to the letters "Cl" or "Cx". See `static/providers/README.md`.

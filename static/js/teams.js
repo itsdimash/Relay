@@ -2,6 +2,7 @@ import { state as appState } from './state.js';
 import { $, e } from './dom.js';
 import { request } from './api.js';
 import { roleNames, defaultTeam, modeNames, providerLabel } from './constants.js';
+import { limitRow } from './limits.js';
 // Official logos are optional. If claude.svg / openai.svg (or .png) are in static/providers, the avatars show them
 // instead of the letters; if not, nothing changes.
 for (const [provider, file] of Object.entries({ claude: 'claude', codex: 'openai' })) {
@@ -113,6 +114,22 @@ export function createTeams({
       $('teamName').textContent = 'Team settings unavailable. Restart Relay. ' + error.message;
     }
   }
+  // How much of each tool's usage limits is left. Claude's comes from its own tasks, Codex's is asked for now and then.
+  let usageKey = '';
+  async function usage() {
+    try {
+      const { now, ...readings } = await request('/api/limits');
+      const key = JSON.stringify(readings);
+      if (key === usageKey) return;
+      usageKey = key;
+      $('usageLeft').replaceChildren(
+        limitRow(document, 'Claude', readings.claude, now, 'no reading yet'),
+        limitRow(document, 'Codex', readings.codex, now, 'no reading')
+      );
+    } catch (_) {
+      // Usage is only a nicety; the rest of the page does not depend on it.
+    }
+  }
   async function connections() {
     $('refreshConnections').disabled = true;
     try {
@@ -127,6 +144,7 @@ export function createTeams({
       $('connectionDetails').innerHTML = Object.entries(status).map(([name, s]) => `<p>${e(name)} · ${e(s.version || 'Not installed')} · ${e(s.message)}</p>`).join('');
       $('connectionHelp').open = !appState.connected;
       updateButtons();
+      usage();
     } catch (error) {
       $('connectionSummary').textContent = error.message;
     } finally {
@@ -134,6 +152,8 @@ export function createTeams({
     }
   }
   function init() {
+    usage();
+    setInterval(usage, 3000); // the same pace as the notch panel, so both always show the same numbers
     $('configureTeam').addEventListener('click', () => {
       $('teamError').textContent = '';
       $('teamNotice').textContent = '';

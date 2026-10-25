@@ -80,6 +80,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @keyframes aura { from { box-shadow: 0 0 6px color-mix(in srgb, var(--agent) 25%, transparent); } to { box-shadow: 0 0 24px color-mix(in srgb, var(--agent) 55%, transparent); } }
 .room-label { margin: 0; color: var(--muted); font-size: 12px; text-align: center; min-height: 18px; }
 
+/* Usage left, in the Office */
+.limits { display: none; flex-direction: column; gap: 6px; margin-top: 12px; }
+.panel[data-view="office"] .limits { display: flex; }
+.limit { display: grid; grid-template-columns: 46px 64px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.limit-name { color: var(--text); font-weight: 600; }
+.limit-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .12); overflow: hidden; }
+.limit-bar i { display: block; height: 100%; width: var(--left, 0%); border-radius: 3px; background: var(--brand); transition: width .4s; }
+.limit[data-level="low"] .limit-bar i { background: var(--amber); }
+.limit[data-level="critical"] .limit-bar i { background: var(--red); }
+.limit[data-level="none"] .limit-bar i { width: 0; }
+.limit-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel[data-mode="compact"] .limits { display: none; }
+.panel[data-view="office"] .last { -webkit-line-clamp: 1; }
+
 /* Task */
 .info { flex-direction: column; }
 .info-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; }

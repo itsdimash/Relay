@@ -1,5 +1,6 @@
 /** Notch panel: polls the local engine for the active task and shows it, with music, notes and the agent office. */
 import { createRoom } from './js/notch-room.js';
+import { limitRow } from './js/limits.js';
 
 const $ = id => document.getElementById(id);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -134,6 +135,20 @@ function notifyNative(run) {
   tell({ type: 'attention', keep: needsYou });
 }
 
+// Usage left for each tool, shown in the Office. Rebuilt only when the numbers change.
+let limitsKey = '';
+function renderLimits(limits) {
+  if (!limits) return;
+  const { now, ...readings } = limits;
+  const key = JSON.stringify(readings);
+  if (key === limitsKey) return;
+  limitsKey = key;
+  $('limits').replaceChildren(
+    limitRow(document, 'Claude', readings.claude, now, 'no reading yet'),
+    limitRow(document, 'Codex', readings.codex, now, 'no reading')
+  );
+}
+
 async function poll() {
   try {
     const data = await fetch('/api/notch', { cache: 'no-store' }).then(r => r.json());
@@ -141,6 +156,7 @@ async function poll() {
     const before = JSON.stringify(current);
     current = data.run;
     if (JSON.stringify(current) !== before) render(current);
+    renderLimits(data.limits);
     notifyNative(current);
   } catch (_) {
     $('status').textContent = 'Relay is not responding';
