@@ -1,4 +1,4 @@
-/** Notch panel: polls the local engine for the active task and shows it, with music, notes and the agent office. */
+/** Notch panel: polls the local engine for the active task and shows it, with music, notes, files to deliver and the agent office. */
 import { createRoom } from './js/notch-room.js';
 import { limitRow } from './js/limits.js';
 
@@ -41,8 +41,9 @@ let view = 'notes';
 // The tab the person picked last. The first opening after the app starts is the Notes; after that the panel comes back to this.
 let chosenView = 'notes';
 let mode = 'compact'; // pill | compact | full, set by the app
-const VIEWS = ['music', 'notes', 'task', 'office'];
+const VIEWS = ['music', 'notes', 'deliver', 'task', 'office'];
 let notes = [];
+let deliver = [];
 let noteBusy = false;
 let inputFocused = false;
 let holding = false;
@@ -188,8 +189,8 @@ async function decide(path, body) {
   }
 }
 
-// Views: Music, Notes, Task and (in the full panel only) Office.
-const tabs = { music: $('tabMusic'), notes: $('tabNotes'), task: $('tabTask'), office: $('tabOffice') };
+// Views: Music, Notes, Deliver, Task and (in the full panel only) Office.
+const tabs = { music: $('tabMusic'), notes: $('tabNotes'), deliver: $('tabDeliver'), task: $('tabTask'), office: $('tabOffice') };
 
 function fallbackView() {
   return chosenView;
@@ -209,6 +210,7 @@ function setView(next, { focus = true } = {}) {
     if (view === 'notes') loadNotes();
     else $('noteInput').blur();
   }
+  if (view === 'deliver') loadDeliver();
   tickProgress();
   syncHold();
 }
@@ -307,21 +309,22 @@ async function addNote(kind) {
   }
 }
 
-for (const [name, tab] of Object.entries(tabs)) {
-  tab.addEventListener('click', () => {
-    if (name !== 'office') chosenView = name; // the Office needs the big panel, so it is never what a hover comes back to
-    // The office lives in the full panel: from the small one, this button asks the app to grow it.
-    if (name === 'office' && mode !== 'full') {
-      tell({ type: 'expand', view: 'office' });
-      return;
-    }
-    // Only the Office, and a plan waiting for an answer, need the big panel; every other view goes back to the small one.
-    const needsRoom = name === 'office' || (name === 'task' && !!current?.plan);
-    if (mode === 'full' && !needsRoom) tell({ type: 'shrink' });
-    if (mode === 'compact' && needsRoom) tell({ type: 'expand' });
-    setView(name);
-  });
+// Picking a tab, by a click or because files were dropped on the panel.
+function pickTab(name) {
+  if (name !== 'office') chosenView = name; // the Office needs the big panel, so it is never what a hover comes back to
+  // The office lives in the full panel: from the small one, this button asks the app to grow it.
+  if (name === 'office' && mode !== 'full') {
+    tell({ type: 'expand', view: 'office' });
+    return;
+  }
+  // Only the Office, and a plan waiting for an answer, need the big panel; every other view goes back to the small one.
+  const needsRoom = name === 'office' || (name === 'task' && !!current?.plan);
+  if (mode === 'full' && !needsRoom) tell({ type: 'shrink' });
+  if (mode === 'compact' && needsRoom) tell({ type: 'expand' });
+  setView(name);
 }
+
+for (const [name, tab] of Object.entries(tabs)) tab.addEventListener('click', () => pickTab(name));
 $('noteInput').addEventListener('focus', () => { inputFocused = true; syncHold(); });
 $('noteInput').addEventListener('blur', () => { inputFocused = false; syncHold(); });
 $('noteInput').addEventListener('keydown', event => {
@@ -329,6 +332,223 @@ $('noteInput').addEventListener('keydown', event => {
   event.preventDefault();
   addNote(event.metaKey || event.ctrlKey ? 'todo' : 'note');
 });
+// Deliver: files waiting on the shelf. The app does the real dragging, in and out, because a web page never gets
+// the path of a dropped file; this page keeps the list and tells the app which files a press on a row would drag.
+let selected = new Set(); // ids of the rows picked to be dragged together
+let lastPicked = '';
+let carrying = [];        // ids of the files that are being dragged out right now
+let deliverSettings = { remove_after_drop: false, auto_catch: false };
+let deliverProblem = null; // why Auto-catch cannot read the Downloads folder, when it cannot
+
+function sizeText(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${unit === 0 ? value : value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+function hintText() {
+  const ready = deliver.filter(item => !item.missing).length;
+  if (!deliver.length) return deliverSettings.auto_catch ? 'Catching downloads' : 'Drop files on the notch';
+  if (!ready) return 'Nothing left to deliver';
+  if (selected.size) return `${selected.size} selected · drag out`;
+  return `${ready} ${ready === 1 ? 'file' : 'files'} · drag out`;
+}
+
+// Selection changes repaint the rows that are there, so a press on a row is never swallowed by a rebuilt list.
+function paintSelection() {
+  for (const row of $('deliverList').children) row.toggleAttribute('data-selected', selected.has(row.dataset.id));
+  $('deliverHint').textContent = hintText();
+}
+
+// Tells the app which files a press on the shelf would drag if the pointer now moves with the button down.
+function carryOut(entries) {
+  carrying = entries.map(entry => entry.id);
+  if (entries.length) tell({ type: 'deliverArm', paths: entries.map(entry => entry.path) });
+}
+
+// A press on a row picks it (⌘ adds or removes it, ⇧ takes a range) and arms the drag of everything picked.
+function pressRow(event, item) {
+  if (event.button !== 0 || item.missing || event.target.closest('.file-remove')) return;
+  const additive = event.metaKey || event.ctrlKey;
+  if (event.shiftKey && lastPicked) {
+    const ids = deliver.filter(entry => !entry.missing).map(entry => entry.id);
+    const from = ids.indexOf(lastPicked);
+    const to = ids.indexOf(item.id);
+    selected = from >= 0 && to >= 0 ? new Set(ids.slice(Math.min(from, to), Math.max(from, to) + 1)) : new Set([item.id]);
+  } else if (additive) {
+    if (selected.has(item.id)) {
+      selected.delete(item.id); // taken out of the picked files: nothing to drag from this row
+      lastPicked = item.id;
+      paintSelection();
+      return;
+    }
+    selected.add(item.id);
+  } else if (!selected.has(item.id)) {
+    selected = new Set([item.id]);
+  }
+  if (!event.shiftKey) lastPicked = item.id;
+  paintSelection();
+  carryOut(deliver.filter(entry => selected.has(entry.id) && !entry.missing));
+}
+
+// A plain click (no drag) on one of several picked rows leaves just that row picked, as in Finder.
+function clickRow(event, item) {
+  if (item.missing || event.shiftKey || event.metaKey || event.ctrlKey || event.target.closest('.file-remove')) return;
+  if (selected.size > 1 && selected.has(item.id)) {
+    selected = new Set([item.id]);
+    paintSelection();
+  }
+}
+
+function deliverRow(item) {
+  const li = document.createElement('li');
+  li.className = 'file';
+  li.dataset.id = item.id;
+  li.dataset.kind = item.kind;
+  li.toggleAttribute('data-missing', !!item.missing);
+  li.toggleAttribute('data-selected', selected.has(item.id));
+  li.title = item.missing ? `${item.path} (moved or deleted)` : item.path;
+  const icon = document.createElement('span');
+  icon.className = 'file-icon';
+  const extension = item.name.includes('.') ? item.name.split('.').pop() : '';
+  icon.textContent = item.kind === 'folder' ? 'DIR' : (extension.slice(0, 4) || 'FILE');
+  const name = document.createElement('span');
+  name.className = 'file-name';
+  name.textContent = item.name;
+  const size = document.createElement('span');
+  size.className = 'file-size';
+  size.textContent = item.missing ? 'missing' : sizeText(item.size);
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'file-remove';
+  remove.textContent = '×';
+  remove.setAttribute('aria-label', `Remove from Deliver: ${item.name}`);
+  remove.addEventListener('click', () => changeDeliver('/api/deliver/remove', { id: item.id }));
+  li.addEventListener('pointerdown', event => pressRow(event, item));
+  li.addEventListener('click', event => clickRow(event, item));
+  li.append(icon, name, size, remove);
+  return li;
+}
+
+const PROBLEMS = {
+  denied: 'Relay is not allowed to open your Downloads folder. Allow it in System Settings › Privacy & Security › Files & Folders.',
+  unreadable: 'Relay cannot read your Downloads folder right now.',
+};
+
+function paintSettings() {
+  $('deliverAuto').setAttribute('aria-pressed', String(!!deliverSettings.remove_after_drop));
+  $('deliverCatch').setAttribute('aria-pressed', String(!!deliverSettings.auto_catch));
+  const problem = deliverSettings.auto_catch && deliverProblem ? PROBLEMS[deliverProblem] || PROBLEMS.unreadable : '';
+  $('deliverNotice').textContent = problem;
+  $('deliverNotice').hidden = !problem;
+  $('deliverHint').textContent = hintText();
+}
+
+function renderDeliver() {
+  const list = $('deliverList');
+  const top = list.scrollTop;
+  const ready = new Set(deliver.filter(item => !item.missing).map(item => item.id));
+  selected = new Set([...selected].filter(id => ready.has(id))); // a file that went away is no longer picked
+  list.replaceChildren(...deliver.map(deliverRow));
+  list.scrollTop = top;
+  $('deliverEmpty').hidden = deliver.length > 0;
+  $('deliverHint').textContent = hintText();
+  $('deliverAll').disabled = ready.size < 2;
+  $('deliverClear').disabled = !deliver.length;
+  $('deliverCount').textContent = String(ready.size);
+  $('deliverCount').hidden = ready.size === 0;
+  paintSettings();
+}
+
+async function loadDeliver() {
+  try {
+    const data = await fetch('/api/deliver', { cache: 'no-store' }).then(r => r.json());
+    if (!Array.isArray(data.items)) return;
+    const valid = typeof data.settings?.remove_after_drop === 'boolean' && typeof data.settings?.auto_catch === 'boolean';
+    const settings = valid ? data.settings : deliverSettings;
+    const problem = typeof data.problem === 'string' ? data.problem : null;
+    if (JSON.stringify([data.items, settings, problem]) === JSON.stringify([deliver, deliverSettings, deliverProblem])) return;
+    deliver = data.items;
+    deliverSettings = settings;
+    deliverProblem = problem;
+    renderDeliver();
+  } catch (_) {
+    /* The next poll will bring the engine back; the shelf keeps its last list. */
+  }
+}
+
+async function changeDeliver(path, body) {
+  $('deliverError').textContent = '';
+  try {
+    deliver = (await post(path, body)).items;
+    renderDeliver();
+  } catch (error) {
+    $('deliverError').textContent = error.message;
+    loadDeliver();
+  }
+}
+
+$('deliverAll').addEventListener('pointerdown', event => {
+  if (event.button === 0) carryOut(deliver.filter(item => !item.missing));
+});
+$('deliverClear').addEventListener('click', () => changeDeliver('/api/deliver/clear', {}));
+async function changeSetting(change) {
+  $('deliverError').textContent = '';
+  try {
+    deliverSettings = (await post('/api/deliver/settings', change)).settings;
+    deliverProblem = null;
+    paintSettings();
+    return true;
+  } catch (error) {
+    $('deliverError').textContent = error.message;
+    return false;
+  }
+}
+$('deliverAuto').addEventListener('click', () => changeSetting({ remove_after_drop: !deliverSettings.remove_after_drop }));
+$('deliverCatch').addEventListener('click', async () => {
+  // The engine looks at the folder every couple of seconds; ask again after its first look to show a problem if there is one.
+  if (await changeSetting({ auto_catch: !deliverSettings.auto_catch }) && deliverSettings.auto_catch) setTimeout(loadDeliver, 2600);
+});
+// A press on the empty part of the list lets go of the picked rows.
+$('deliverList').addEventListener('pointerdown', event => {
+  if (event.target !== $('deliverList') || !selected.size) return;
+  selected = new Set();
+  paintSelection();
+});
+
+// The app calls these while files are dragged over the panel, when they are dropped, and when a drag out has ended.
+window.relayDeliverDragState = over => $('panel').toggleAttribute('data-dropping', !!over);
+window.relayDeliverDrop = async paths => {
+  $('panel').removeAttribute('data-dropping');
+  if (!Array.isArray(paths) || !paths.length) return;
+  pickTab('deliver');
+  $('deliverError').textContent = '';
+  try {
+    if (!token) await poll();
+    deliver = (await post('/api/deliver/add', { paths })).items;
+    renderDeliver();
+  } catch (error) {
+    $('deliverError').textContent = error.message;
+  }
+};
+// accepted: somebody took the files. moved: they were moved, so they are no longer where the shelf has them.
+window.relayDeliverDragEnded = async (accepted, moved) => {
+  const ids = carrying;
+  carrying = [];
+  if (accepted && ids.length && (moved || deliverSettings.remove_after_drop)) {
+    selected = new Set();
+    await changeDeliver('/api/deliver/remove', { ids });
+  } else {
+    loadDeliver();
+  }
+};
+
 // Now playing. The app reads it from the system and calls relayNowPlaying; the buttons send commands back.
 function position() {
   if (!music || !(music.duration > 0) || !Number.isFinite(music.elapsed)) return null;
@@ -534,9 +754,13 @@ document.addEventListener('keydown', event => {
 room.start();
 render(null);
 renderMusic();
+renderDeliver();
 setView('notes', { focus: false });
 loadNotes();
+loadDeliver();
 poll();
 setInterval(poll, 1000);
 setInterval(tickTimer, 1000);
 setInterval(tickProgress, 500);
+// A file may have been moved or deleted since, and with Auto-catch on new downloads arrive on any tab.
+setInterval(() => { if ((view === 'deliver' || deliverSettings.auto_catch) && mode !== 'pill') loadDeliver(); }, 3000);

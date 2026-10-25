@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import threading
 
-from . import attachments, git_ops, history, lifecycle, limits, notes, providers, recovery, registry, reports
+from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, providers, recovery, registry, reports
 from . import contracts
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
@@ -29,6 +29,8 @@ class Application:
         self.updater = Updater()
         # How much of each tool's usage limits is left; reads nothing until the first screen asks.
         self.limits = limits.Limits(self.DATA / 'limits.json', providers.executable)
+        # Puts finished downloads on the Deliver shelf when that is switched on; looks at nothing until watching starts.
+        self.catcher = deliver.Catcher(self)
 
         class TaskRun(Run):
             app = self
@@ -93,6 +95,17 @@ class Application:
     add_note = notes.add_note
     set_note_done = notes.set_done
     remove_note = notes.remove_note
+
+    # Files waiting on the notch panel's Deliver shelf (paths only).
+    read_deliver_items = deliver.read_items
+    write_deliver_items = deliver.write_items
+    deliver_list = deliver.listing
+    add_deliver = deliver.add_paths
+    remove_deliver = deliver.remove_item
+    clear_deliver = deliver.clear_items
+    deliver_settings = deliver.read_settings
+    set_deliver_settings = deliver.set_settings
+    watch_downloads = deliver.watch_downloads
 
     # Image validation and task-scoped attachment access.
     decode_images = staticmethod(attachments.decode_images)

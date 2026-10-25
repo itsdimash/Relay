@@ -90,6 +90,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'notes': self.app.read_notes()})
             except (ValueError, OSError) as error:
                 return self.respond({'error': str(error)}, 400)
+        if path == '/api/deliver':
+            try:
+                return self.respond({'items': self.app.deliver_list(), 'settings': self.app.deliver_settings(), 'problem': self.app.catcher.problem})
+            except (ValueError, OSError) as error:
+                return self.respond({'error': str(error)}, 400)
         if path == '/api/update':
             return self.respond(self.app.updater.public())
         if path == '/api/teams':
@@ -166,6 +171,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'notes': self.app.set_note_done(payload.get('id'), payload.get('done'))})
             if path == '/api/notes/remove':
                 return self.respond({'notes': self.app.remove_note(payload.get('id'))})
+            if path == '/api/deliver/add':
+                return self.respond({'items': self.app.add_deliver(payload.get('paths'))}, 201)
+            if path == '/api/deliver/remove':
+                return self.respond({'items': self.app.remove_deliver(payload.get('ids', payload.get('id')))})
+            if path == '/api/deliver/settings':
+                return self.respond({'settings': self.app.set_deliver_settings(payload.get('remove_after_drop'), payload.get('auto_catch'))})
+            if path == '/api/deliver/clear':
+                return self.respond({'items': self.app.clear_deliver()})
             if path == '/api/folders':
                 return self.respond(self.app.folder_choices(payload.get('path')))
             if path == '/api/update/install':

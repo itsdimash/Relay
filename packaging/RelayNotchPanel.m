@@ -23,6 +23,8 @@ static const CGFloat PanelRadius = 26;
 static const NSTimeInterval PillVisibleSeconds = 4.2; // how long a track-change pill stays out
 static const NSTimeInterval PillMinGap = 2.0;         // quick skipping does not flash the pill again and again
 static const CGFloat TriggerMargin = 55;      // hot zone is the notch plus this much on each side
+static const CGFloat DragZoneDepth = 95;      // a file being dragged is held by its icon, so the pointer sits this far below the notch band at most
+static const CGFloat DragZoneMargin = 170;    // and this much to each side of the notch
 static const NSTimeInterval ShowDelay = 0.15; // the pointer must rest in the hot zone this long
 static const NSTimeInterval HideDelay = 0.45; // grace period after the pointer leaves the panel
 static const NSTimeInterval DoneVisibleSeconds = 7.0;
@@ -42,11 +44,129 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 - (NSRect)constrainFrameRect:(NSRect)frameRect toScreen:(NSScreen *)screen { return frameRect; }
 @end
 
+// What the web view is doing with a drag that is over it.
+typedef NS_ENUM(NSInteger, RelayDragKind) {
+    RelayDragNone = 0, // no drag over the view
+    RelayDragWeb,      // something for the page itself: WebKit handles it
+    RelayDragFiles,    // files from Finder or another app: they go to the Deliver shelf
+    RelayDragOwn,      // files the panel is dragging out itself: never taken back in
+};
+
+// A web page is never given the path of a dropped file, so files dragged onto the panel are taken here, in the app,
+// and handed to the page as plain paths.
 @interface RelayNotchWebView : WKWebView
+@property(nonatomic, copy) void (^fileDragHandler)(BOOL over);               // files are over the panel, or left it
+@property(nonatomic, copy) void (^filesDropHandler)(NSArray<NSString *> *paths); // files were dropped on the panel
 @end
 
-@implementation RelayNotchWebView
+// Whether a drag carries files. Some apps hand over a promise instead of a path: the file is only written when asked for.
+// Before a drag reaches one of our windows the system may not say what it carries; that counts as maybe.
+static BOOL CarriesFiles(NSArray<NSString *> *types) {
+    if (!types.count) return YES;
+    if ([types containsObject:NSPasteboardTypeFileURL] || [types containsObject:@"NSFilenamesPboardType"]) return YES;
+    for (NSString *type in NSFilePromiseReceiver.readableDraggedTypes) {
+        if ([types containsObject:type]) return YES;
+    }
+    return NO;
+}
+
+static NSArray<NSFilePromiseReceiver *> *DroppedFilePromises(id<NSDraggingInfo> info) {
+    return [info.draggingPasteboard readObjectsForClasses:@[ NSFilePromiseReceiver.class ] options:nil] ?: @[];
+}
+
+static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
+    NSArray *urls = [info.draggingPasteboard readObjectsForClasses:@[ NSURL.class ]
+                                                           options:@{ NSPasteboardURLReadingFileURLsOnlyKey: @YES }];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *url in urls) {
+        NSString *path = url.filePathURL.path ?: url.path;
+        if (path.length) [paths addObject:path];
+    }
+    return paths;
+}
+
+@implementation RelayNotchWebView {
+    RelayDragKind _dragKind;
+}
+
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if (sender.draggingSource) { // the panel's own drag out
+        _dragKind = RelayDragOwn;
+        return NSDragOperationNone;
+    }
+    if (DroppedFilePaths(sender).count || DroppedFilePromises(sender).count) {
+        _dragKind = RelayDragFiles;
+        if (self.fileDragHandler) self.fileDragHandler(YES);
+        return NSDragOperationCopy;
+    }
+    _dragKind = RelayDragWeb;
+    return [super draggingEntered:sender];
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+    if (_dragKind == RelayDragFiles) return NSDragOperationCopy;
+    if (_dragKind == RelayDragOwn) return NSDragOperationNone;
+    return [super draggingUpdated:sender];
+}
+
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+    RelayDragKind kind = _dragKind;
+    _dragKind = RelayDragNone;
+    if (kind == RelayDragFiles) {
+        if (self.fileDragHandler) self.fileDragHandler(NO);
+    } else if (kind != RelayDragOwn) {
+        [super draggingExited:sender];
+    }
+}
+
+// The app that is being dropped from writes each promised file into a folder of ours; once all of them are there,
+// the page puts them on the shelf. They are in Caches, so the system may clear them out in time.
+- (void)receivePromises:(NSArray<NSFilePromiseReceiver *> *)receivers {
+    NSURL *caches = [NSFileManager.defaultManager URLForDirectory:NSCachesDirectory inDomain:NSUserDomainMask appropriateForURL:nil create:YES error:nil];
+    NSURL *folder = [[caches URLByAppendingPathComponent:@"Relay/Deliver" isDirectory:YES] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
+    if (!folder || ![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]) return;
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    queue.maxConcurrentOperationCount = 1; // the readers run one at a time, so the counters need no lock
+    __block NSInteger remaining = 0;
+    for (NSFilePromiseReceiver *receiver in receivers) remaining += MAX(1, (NSInteger)receiver.fileNames.count);
+    NSMutableArray<NSString *> *received = [NSMutableArray array];
+    __weak RelayNotchWebView *weakSelf = self;
+    for (NSFilePromiseReceiver *receiver in receivers) {
+        [receiver receivePromisedFilesAtDestination:folder options:@{} operationQueue:queue reader:^(NSURL *fileURL, NSError *error) {
+            (void)receivers.count; // keeps the receivers alive until their files have arrived
+            if (fileURL && !error) [received addObject:fileURL.path];
+            if (--remaining > 0) return;
+            NSArray<NSString *> *done = [received copy];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                RelayNotchWebView *strongSelf = weakSelf;
+                if (strongSelf && done.count && strongSelf.filesDropHandler) strongSelf.filesDropHandler(done);
+            });
+        }];
+    }
+}
+
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)sender {
+    if (_dragKind == RelayDragFiles) return YES;
+    if (_dragKind == RelayDragOwn) return NO;
+    return [super prepareForDragOperation:sender];
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    RelayDragKind kind = _dragKind;
+    _dragKind = RelayDragNone;
+    if (kind == RelayDragFiles) {
+        NSArray<NSString *> *paths = DroppedFilePaths(sender);
+        NSArray<NSFilePromiseReceiver *> *promises = paths.count ? @[] : DroppedFilePromises(sender);
+        if (self.fileDragHandler) self.fileDragHandler(NO);
+        if (paths.count && self.filesDropHandler) self.filesDropHandler(paths);
+        if (promises.count) [self receivePromises:promises];
+        return paths.count > 0 || promises.count > 0;
+    }
+    if (kind == RelayDragOwn) return NO;
+    return [super performDragOperation:sender];
+}
 @end
 
 // Lets the web view hold the message handler without keeping the panel alive in a cycle.
@@ -60,7 +180,36 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 }
 @end
 
-@interface RelayNotchPanel () <WKScriptMessageHandler, WKNavigationDelegate>
+// An almost invisible window that waits in the zone around the notch while a mouse button is down. Whatever app a drag
+// comes from, and whatever it puts on the drag board, the system tells this window when a drag with files arrives over
+// it; then the panel opens. It exists only while a button is held in that zone, so it never gets in the way of a click.
+@interface RelayDragCatcherView : NSView
+@property(nonatomic, copy) void (^fileDragArrived)(void);
+@end
+
+@implementation RelayDragCatcherView
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        NSMutableArray<NSPasteboardType> *types = [NSMutableArray arrayWithObjects:NSPasteboardTypeFileURL, @"NSFilenamesPboardType", nil];
+        [types addObjectsFromArray:NSFilePromiseReceiver.readableDraggedTypes];
+        [self registerForDraggedTypes:types];
+    }
+    return self;
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if (sender.draggingSource) return NSDragOperationNone; // the panel's own drag out
+    if (self.fileDragArrived) self.fileDragArrived();
+    return NSDragOperationCopy;
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+    return sender.draggingSource ? NSDragOperationNone : NSDragOperationCopy;
+}
+@end
+
+@interface RelayNotchPanel () <WKScriptMessageHandler, WKNavigationDelegate, NSDraggingSource>
 @property(nonatomic, strong) NSURL *pageURL;
 @property(nonatomic, strong) RelayNotchWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
@@ -95,6 +244,12 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
 @property(nonatomic, copy) NSString *agentActor;        // nil when no task is running
 @property(nonatomic, strong) NSColor *musicColor;       // the colour of the cover that is playing
 @property(nonatomic, copy) NSString *musicColorSource;  // the artwork that colour came from
+@property(nonatomic, copy) NSArray<NSString *> *armedPaths; // the files of the Deliver row that was pressed: dragged out once the pointer moves
+@property(nonatomic) NSPoint armedAt;                       // where the pointer was when the row was pressed
+@property(nonatomic) BOOL draggingOut;                      // files are being dragged out of the panel
+@property(nonatomic) NSInteger dragBoardCount;              // the drag board's change count while no mouse button was down
+@property(nonatomic) NSInteger dragOutIdleTicks;            // pointer ticks since a drag out last had the mouse button down
+@property(nonatomic, strong) NSPanel *catcher;              // waits for a drag with files in the zone around the notch
 @end
 
 @implementation RelayNotchPanel
@@ -105,6 +260,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
         [NSUserDefaults.standardUserDefaults registerDefaults:@{RelayNotchEnabledKey: @YES}];
         _pageURL = pageURL;
         [self buildWindow];
+        [self buildCatcher];
         [self installMonitors];
         _nowPlaying = [[RelayNowPlaying alloc] init];
         __weak RelayNotchPanel *weakSelf = self;
@@ -134,6 +290,7 @@ static const CGEventFlags LeftCommandMask = 0x00000008;
     if (enabled) {
         [self startAmbient];
     } else {
+        [self.catcher orderOut:nil];
         [self hideAnimated:YES];
         [self stopAmbient];
     }
@@ -296,7 +453,10 @@ static NSColor *DominantColor(NSString *dataURL) {
     RelayWeakMessageHandler *handler = [[RelayWeakMessageHandler alloc] init];
     handler.target = self;
     [configuration.userContentController addScriptMessageHandler:handler name:@"relayPanel"];
-    WKWebView *webView = [[RelayNotchWebView alloc] initWithFrame:container.bounds configuration:configuration];
+    RelayNotchWebView *webView = [[RelayNotchWebView alloc] initWithFrame:container.bounds configuration:configuration];
+    __weak RelayNotchPanel *weakSelf = self;
+    webView.fileDragHandler = ^(BOOL over) { [weakSelf pushDeliverDragState:over]; };
+    webView.filesDropHandler = ^(NSArray<NSString *> *paths) { [weakSelf pushDeliverDrop:paths]; };
     // The page keeps the size of the current mode and stays pinned to the top while the window grows out of the notch.
     // layoutWebView places it on every frame, so it must not also resize itself.
     webView.autoresizingMask = NSViewNotSizable;
@@ -307,6 +467,55 @@ static NSColor *DominantColor(NSString *dataURL) {
     self.window = window;
 
     [webView loadRequest:[NSURLRequest requestWithURL:self.pageURL]];
+}
+
+- (void)buildCatcher {
+    NSPanel *catcher = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 10, 10)
+                                                  styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+    catcher.releasedWhenClosed = NO;
+    catcher.level = NSMainMenuWindowLevel + 3;
+    catcher.opaque = NO;
+    catcher.hasShadow = NO;
+    catcher.hidesOnDeactivate = NO;
+    catcher.canHide = NO;
+    // A window with nothing in it lets everything through, drags included; a hint of colour makes it a target.
+    catcher.backgroundColor = [NSColor colorWithWhite:0 alpha:0.01];
+    catcher.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary |
+                                 NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorIgnoresCycle;
+    RelayDragCatcherView *view = [[RelayDragCatcherView alloc] initWithFrame:NSMakeRect(0, 0, 10, 10)];
+    view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    __weak RelayNotchPanel *weakSelf = self;
+    view.fileDragArrived = ^{ [weakSelf openForFileDrag]; };
+    catcher.contentView = view;
+    self.catcher = catcher;
+}
+
+// A drag with files has reached the notch zone: the Deliver shelf opens under it.
+- (void)openForFileDrag {
+    if (!self.enabled || self.shown) return;
+    self.pinned = NO;
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:@"deliver"];
+}
+
+// The catcher is out only while the left button is held in the drag zone and the panel is closed.
+- (void)updateDragCatcher {
+    BOOL pressed = (NSEvent.pressedMouseButtons & 1) != 0;
+    BOOL inZone = pressed && !self.shown && !self.draggingOut && [self pointerIsInDragZone];
+    if (!inZone) {
+        if (self.catcher.visible) [self.catcher orderOut:nil];
+        return;
+    }
+    if (self.catcher.visible) return;
+    NSScreen *screen = [self screenForPoint:NSEvent.mouseLocation];
+    if (!screen) return;
+    NSRect area = screen.frame;
+    NSSize notch = [self notchSizeForScreen:screen];
+    CGFloat width = notch.width + 2 * DragZoneMargin;
+    CGFloat height = notch.height + DragZoneDepth;
+    [self.catcher setFrame:NSMakeRect(NSMidX(area) - width / 2, NSMaxY(area) - height, width, height) display:NO];
+    [self.catcher orderFrontRegardless];
 }
 
 - (NSScreen *)screenForPoint:(NSPoint)point {
@@ -578,6 +787,99 @@ static NSColor *DominantColor(NSString *dataURL) {
     }];
 }
 
+#pragma mark - Deliver
+
+// Calls a function of the panel page, if the page has defined it.
+- (void)callPage:(NSString *)script arguments:(NSDictionary *)arguments {
+    [self.webView callAsyncJavaScript:script
+                            arguments:arguments
+                              inFrame:nil
+                       inContentWorld:WKContentWorld.pageWorld
+                    completionHandler:nil];
+}
+
+- (void)pushDeliverDragState:(BOOL)over {
+    [self callPage:@"if (window.relayDeliverDragState) window.relayDeliverDragState(over);" arguments:@{ @"over": @(over) }];
+}
+
+// Files were dropped on the panel: the page puts them on the Deliver shelf.
+- (void)pushDeliverDrop:(NSArray<NSString *> *)paths {
+    [self callPage:@"if (window.relayDeliverDrop) window.relayDeliverDrop(paths);" arguments:@{ @"paths": paths }];
+}
+
+// True while the person drags files from Finder or another app. Nothing in a drag tells us what it carries until it
+// starts, so this watches the drag board: while no button is down its change count is noted, and a count that has
+// changed with the left button down means a drag began, which counts when it carries files.
+- (BOOL)fileDragInProgress {
+    NSPasteboard *board = [NSPasteboard pasteboardWithName:NSPasteboardNameDrag];
+    if (!(NSEvent.pressedMouseButtons & 1)) {
+        self.dragBoardCount = board.changeCount;
+        return NO;
+    }
+    if (board.changeCount == self.dragBoardCount) return NO;
+    return CarriesFiles(board.types);
+}
+
+// A Deliver row was pressed and the pointer has moved with the button still down: drag the files out.
+- (void)checkDragOut {
+    if (!self.armedPaths) return;
+    if (!(NSEvent.pressedMouseButtons & 1)) { // released: it was a click
+        self.armedPaths = nil;
+        return;
+    }
+    NSPoint here = NSEvent.mouseLocation;
+    if (hypot(here.x - self.armedAt.x, here.y - self.armedAt.y) < 5) return;
+    NSArray<NSString *> *paths = self.armedPaths;
+    self.armedPaths = nil;
+    [self beginDragOutOfPaths:paths];
+}
+
+- (void)beginDragOutOfPaths:(NSArray<NSString *> *)paths {
+    if (!self.shown || self.draggingOut) return;
+    // The drag starts from where the pointer is now.
+    NSEvent *event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+                                        location:[self.window convertPointFromScreen:NSEvent.mouseLocation]
+                                   modifierFlags:0
+                                       timestamp:NSProcessInfo.processInfo.systemUptime
+                                    windowNumber:self.window.windowNumber
+                                         context:nil
+                                     eventNumber:0
+                                      clickCount:1
+                                        pressure:1.0];
+    if (!event) return;
+    NSPoint local = [self.webView convertPoint:event.locationInWindow fromView:nil];
+    NSMutableArray<NSDraggingItem *> *items = [NSMutableArray array];
+    for (NSString *path in paths) {
+        if (![NSFileManager.defaultManager fileExistsAtPath:path]) continue; // moved or deleted since it was dropped
+        NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:[NSURL fileURLWithPath:path]];
+        NSImage *icon = [[NSWorkspace.sharedWorkspace iconForFile:path] copy];
+        icon.size = NSMakeSize(44, 44);
+        [item setDraggingFrame:NSMakeRect(local.x - 22, local.y - 22, 44, 44) contents:icon];
+        [items addObject:item];
+    }
+    if (!items.count) return;
+    self.draggingOut = YES;
+    self.dragOutIdleTicks = 0;
+    [self cancelTimer:&_hideTimer];
+    NSDraggingSession *session = [self.webView beginDraggingSessionWithItems:items event:event source:self];
+    session.draggingFormation = NSDraggingFormationPile;
+    session.animatesToStartingPositionsOnCancelOrFail = YES;
+}
+
+#pragma mark - NSDraggingSource
+
+// The files may be dropped in any other app (copied, or moved when the target moves them), but not back into the panel.
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    return context == NSDraggingContextOutsideApplication ? (NSDragOperationCopy | NSDragOperationMove | NSDragOperationGeneric) : NSDragOperationNone;
+}
+
+- (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation {
+    self.draggingOut = NO;
+    // The page takes the files off the shelf when they were moved, or when the person wants them off after a drop.
+    [self callPage:@"if (window.relayDeliverDragEnded) window.relayDeliverDragEnded(accepted, moved);"
+         arguments:@{ @"accepted": @(operation != NSDragOperationNone), @"moved": @((operation & NSDragOperationMove) != 0) }];
+}
+
 #pragma mark - Pointer tracking
 
 // The pointer and modifier keys are read 40 times a second. This works in every app and Space,
@@ -625,6 +927,17 @@ static NSColor *DominantColor(NSString *dataURL) {
     return point.y >= NSMaxY(area) - (notch.height + 4) && fabs(point.x - NSMidX(area)) <= half;
 }
 
+// While files are dragged the pointer holds the file by its icon, which hangs below and beside it, so a person who
+// "moves the file to the notch" has the pointer well below the menu bar band. The zone is much larger then.
+- (BOOL)pointerIsInDragZone {
+    NSPoint point = NSEvent.mouseLocation;
+    NSScreen *screen = [self screenForPoint:point];
+    if (!screen) return NO;
+    NSRect area = screen.frame;
+    NSSize notch = [self notchSizeForScreen:screen];
+    return point.y >= NSMaxY(area) - (notch.height + DragZoneDepth) && fabs(point.x - NSMidX(area)) <= notch.width / 2 + DragZoneMargin;
+}
+
 // Double-tap the right Command key to open or close the panel. The key state is read directly,
 // so this works in every app without asking for Input Monitoring or Accessibility access.
 - (void)checkCommandTaps {
@@ -668,6 +981,21 @@ static NSColor *DominantColor(NSString *dataURL) {
 - (void)pointerMoved {
     [self checkCommandTaps];
     if (!self.enabled) return;
+    [self checkDragOut];
+    if (self.draggingOut) { // the panel stays while its files are being carried away
+        // If the system never reported the end of the drag, the button being up for a while is the end of it.
+        // Without this, one lost report would keep the panel from ever opening again.
+        self.dragOutIdleTicks = (NSEvent.pressedMouseButtons & 1) ? 0 : self.dragOutIdleTicks + 1;
+        if (self.dragOutIdleTicks > 40) {
+            [RelayNowPlaying log:@"deliver: the end of a drag out was never reported; carrying on"];
+            self.draggingOut = NO;
+        } else {
+            [self cancelTimer:&_hideTimer];
+            return;
+        }
+    }
+    BOOL fileDrag = [self fileDragInProgress];
+    [self updateDragCatcher];
     if (self.shown) {
         if ([self pointerIsNearPanel]) {
             self.hovered = YES;
@@ -692,7 +1020,8 @@ static NSColor *DominantColor(NSString *dataURL) {
         return;
     }
     // Ignore the pointer while dragging, for example when moving a window to the top of the screen.
-    if ([self pointerIsInHotZone] && NSEvent.pressedMouseButtons == 0) {
+    // Files being dragged are the exception: the Deliver shelf opens so they can be dropped on it.
+    if ((fileDrag ? [self pointerIsInDragZone] : [self pointerIsInHotZone]) && (NSEvent.pressedMouseButtons == 0 || fileDrag)) {
         [self scheduleShow];
     } else {
         [self cancelTimer:&_showTimer];
@@ -706,9 +1035,14 @@ static NSColor *DominantColor(NSString *dataURL) {
         RelayNotchPanel *strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf.showTimer = nil;
-        if (strongSelf.enabled && !strongSelf.shown && [strongSelf pointerIsInHotZone]) {
+        BOOL dragging = [strongSelf fileDragInProgress];
+        if (strongSelf.enabled && !strongSelf.shown && (dragging ? [strongSelf pointerIsInDragZone] : [strongSelf pointerIsInHotZone])) {
             strongSelf.pinned = NO;
-            [strongSelf showOnScreen:[strongSelf screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:nil];
+            if (dragging) {
+                [strongSelf showOnScreen:[strongSelf screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:@"deliver"];
+            } else {
+                [strongSelf showOnScreen:[strongSelf screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:nil];
+            }
         }
     }];
 }
@@ -777,6 +1111,15 @@ static NSColor *DominantColor(NSString *dataURL) {
         }
     } else if ([type isEqualToString:@"media"]) {
         [self.nowPlaying sendCommand:body[@"command"]];
+    } else if ([type isEqualToString:@"deliverArm"]) {
+        // A file row on the Deliver shelf was pressed. If the pointer now moves with the button down, those files are dragged out.
+        NSMutableArray<NSString *> *paths = [NSMutableArray array];
+        NSArray *given = [body[@"paths"] isKindOfClass:NSArray.class] ? body[@"paths"] : @[];
+        for (id path in given) {
+            if ([path isKindOfClass:NSString.class] && [path hasPrefix:@"/"] && paths.count < 100) [paths addObject:path];
+        }
+        self.armedPaths = paths.count ? paths : nil;
+        self.armedAt = NSEvent.mouseLocation;
     } else if ([type isEqualToString:@"hold"]) {
         // The note field has the keyboard: keep the panel open until typing stops or Escape.
         self.holding = [body[@"on"] boolValue];

@@ -63,12 +63,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .count { position: absolute; top: -2px; right: -2px; min-width: 14px; padding: 0 4px; border-radius: 7px; background: var(--amber); color: #2a1a00; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; }
 
 /* One view at a time */
-.stage { flex: 1 1 auto; min-height: 0; display: grid; padding-top: 6px; }
+.stage { position: relative; flex: 1 1 auto; min-height: 0; display: grid; padding-top: 6px; }
 .stage > * { display: none; min-width: 0; min-height: 0; }
 .panel[data-view="task"] .info,
 .panel[data-view="office"] .info,
 .panel[data-view="office"] .room { display: flex; }
 .panel[data-view="notes"] .notes { display: flex; }
+.panel[data-view="deliver"] .deliver { display: flex; }
 .panel[data-view="music"] .player { display: flex; }
 .panel[data-view="office"] .stage { grid-template-columns: 300px minmax(0, 1fr); gap: 16px; }
 .panel[data-mode="full"][data-view="task"] .info { width: 100%; max-width: 540px; justify-self: center; }
@@ -161,6 +162,39 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .note:hover .note-remove, .note-remove:focus-visible { opacity: 1; }
 .note-remove:hover { color: var(--red); }
 .note-empty { color: var(--muted); font-size: 12px; padding: 6px 2px; }
+
+/* Deliver: files waiting to be dragged somewhere else */
+.deliver { flex-direction: column; }
+.deliver-bar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 24px; margin-bottom: 4px; }
+.deliver-hint { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { flex: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .08); font-size: 10.5px; font-weight: 600; transition: background-color .15s, border-color .15s, color .15s, opacity .15s; }
+.chip:hover { background: rgba(255, 255, 255, .16); }
+.chip.quiet { background: transparent; color: var(--muted); }
+.chip.quiet:hover { color: var(--text); background: rgba(255, 255, 255, .08); }
+.chip:disabled { opacity: .35; cursor: default; background: transparent; }
+.chip[aria-pressed="true"] { color: var(--text); border-color: color-mix(in srgb, var(--brand) 65%, transparent); background: color-mix(in srgb, var(--brand) 26%, transparent); }
+.chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+#deliverAll:not(:disabled) { cursor: grab; }
+.deliver-notice { flex: none; margin: 0 0 4px; padding: 4px 9px; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--amber) 12%, transparent); color: var(--text); font-size: 10.5px; line-height: 1.35; }
+.deliver-empty { flex: 1 1 auto; min-height: 0; margin: 0 0 4px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 18px; border: 1.5px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 12px; }
+.deliver-empty[hidden] { display: none; }
+.deliver-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.file { display: flex; align-items: center; gap: 8px; padding: 4px 4px; border-radius: 9px; cursor: grab; }
+.file:hover { background: rgba(255, 255, 255, .07); }
+.file[data-selected] { background: color-mix(in srgb, var(--brand) 24%, transparent); }
+.file[data-selected] .file-icon { border-color: color-mix(in srgb, var(--brand) 70%, transparent); color: var(--text); }
+.file[data-missing] { opacity: .45; cursor: default; }
+.file-icon { flex: none; width: 30px; height: 22px; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--line); color: var(--muted); font-size: 8.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.file[data-kind="folder"] .file-icon { color: var(--amber); }
+.file-name { flex: 1; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file[data-missing] .file-name { text-decoration: line-through; }
+.file-size { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.file-remove { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; padding: 0 4px; border-radius: 6px; opacity: 0; transition: opacity .15s, color .15s; }
+.file:hover .file-remove, .file-remove:focus-visible { opacity: 1; }
+.file-remove:hover { color: var(--red); }
+/* A file is being dragged over the panel */
+.panel[data-dropping] .stage::after { content: "Drop to add to Deliver"; position: absolute; inset: 4px 0 0; z-index: 3; pointer-events: none; display: flex; align-items: center; justify-content: center;
+  border: 1.5px dashed var(--brand); border-radius: 14px; background: var(--bg); color: var(--brand); font-size: 13px; font-weight: 650; }
 
 /* Music */
 .player { align-items: center; gap: 16px; width: 100%; max-width: 520px; justify-self: center; }

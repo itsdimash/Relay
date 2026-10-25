@@ -18,6 +18,10 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="3" width="12" height="14" rx="2.2"/><path d="M7.2 7.6h5.6M7.2 11.2h3.6"/></svg>
         <span id="noteCount" class="count" hidden></span>
       </button>
+      <button type="button" class="tab" role="tab" id="tabDeliver" aria-selected="false" aria-label="Deliver" title="Deliver">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 12v2.8a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V12"/><path d="M10 3.5v8M6.8 8.4 10 11.6l3.2-3.2"/></svg>
+        <span id="deliverCount" class="count" hidden></span>
+      </button>
     </div>
     <div class="side right" role="none">
       <button type="button" class="tab" role="tab" id="tabTask" aria-selected="true" aria-label="Task" title="Task">
@@ -65,6 +69,20 @@
       <p class="note-hint">Enter saves a note · ⌘ Enter saves a to-do</p>
       <ul id="noteList" class="note-list"></ul>
       <p id="noteError" class="error" role="alert"></p>
+    </section>
+
+    <section id="deliver" class="deliver" aria-label="Deliver files">
+      <div class="deliver-bar">
+        <span id="deliverHint" class="deliver-hint" title="Click a file to select it. ⌘-click picks several, ⇧-click picks a range.">Drop files on the notch</span>
+        <button type="button" class="chip" id="deliverAll" title="Drag all the files out at once">Drag all</button>
+        <button type="button" class="chip quiet" id="deliverCatch" aria-pressed="false" title="Put each new download from your Downloads folder on the shelf by itself">Auto-catch</button>
+        <button type="button" class="chip quiet" id="deliverAuto" aria-pressed="false" title="Take files off the shelf after you drop them somewhere">Auto-clear</button>
+        <button type="button" class="chip quiet" id="deliverClear">Clear</button>
+      </div>
+      <p id="deliverNotice" class="deliver-notice" role="status" hidden></p>
+      <p id="deliverEmpty" class="deliver-empty">Drag files here, then drag them out wherever you need them.</p>
+      <ul id="deliverList" class="deliver-list"></ul>
+      <p id="deliverError" class="error" role="alert"></p>
     </section>
 
     <section id="music" class="player music" aria-label="Now playing">

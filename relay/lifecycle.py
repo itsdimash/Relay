@@ -92,6 +92,7 @@ def main(app):
     app_pid = os.environ.get('RELAY_APP_PID', '')
     if app_pid.isdigit() and int(app_pid) > 1:
         stop_when_app_exits(app, int(app_pid))
+    app.watch_downloads()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
