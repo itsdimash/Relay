@@ -5,6 +5,20 @@ import subprocess
 import unittest
 
 
+class RunHistoryInterfaceTests(unittest.TestCase):
+    def test_saved_runs_are_distinct_from_the_composer_and_steps_are_interactive(self):
+        root = Path(__file__).parents[1]
+        conversation = (root / 'static/js/conversation.js').read_text()
+        brand = (root / 'static/brand.css').read_text()
+
+        self.assertIn("classList.toggle('run-open', !!r)", conversation)
+        self.assertIn("Already submitted · this is the saved run", conversation)
+        self.assertIn("setAttribute('role', 'tablist')", conversation)
+        self.assertIn('data-run-step=', conversation)
+        self.assertIn('No clarification was needed for this run.', conversation)
+        self.assertIn('.content.run-open > .workspace-grid { display: none; }', brand)
+
+
 @unittest.skipUnless(shutil.which('node'), 'Node is required for frontend checks')
 class NotificationTests(unittest.TestCase):
     def test_notification_timing_focus_and_async_actions(self):

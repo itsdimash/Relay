@@ -9,6 +9,89 @@ const {
   renderChangeReview,
   reportPriority
 } = globalThis;
+
+const buildSteps = [
+  { key: 'inspect', stage: 'observing', label: 'Inspect', empty: 'The run ended before inspection activity was saved.' },
+  { key: 'clarify', stage: 'awaiting_clarification', label: 'Clarify', empty: 'No clarification was needed for this run.' },
+  { key: 'approve', stage: 'awaiting_approval', label: 'Approve', empty: 'No approval activity was saved.' },
+  { key: 'build', stage: 'building', label: 'Build', empty: 'The Builder did not run.' },
+  { key: 'review', stage: 'reviewing', label: 'Review', empty: 'The Reviewer did not run.' },
+  { key: 'refine', stage: 'fixing', label: 'Refine', empty: 'No refinement round was needed.' },
+  { key: 'result', stage: 'done', label: 'Result', empty: 'A final result has not been saved yet.' }
+];
+
+const stageKeys = {
+  queued: 'inspect',
+  preparing: 'inspect',
+  observing: 'inspect',
+  awaiting_clarification: 'clarify',
+  awaiting_approval: 'approve',
+  building: 'build',
+  reviewing: 'review',
+  fixing: 'refine',
+  done: 'result',
+  needs_attention: 'result',
+  failed: 'result',
+  stopped: 'result',
+  interrupted: 'result'
+};
+
+const eventStageKeys = {
+  preparing: 'inspect',
+  observing: 'inspect',
+  'awaiting clarification': 'clarify',
+  'awaiting approval': 'approve',
+  building: 'build',
+  reviewing: 'review',
+  fixing: 'refine',
+  refining: 'refine',
+  done: 'result'
+};
+
+function ensureRunBrief() {
+  if ($('runBrief')) return;
+  const brief = document.createElement('section');
+  brief.id = 'runBrief';
+  brief.className = 'run-brief';
+  brief.setAttribute('aria-labelledby', 'runBriefLabel');
+  brief.innerHTML = '<div class="run-brief-heading"><span id="runBriefLabel">Ran prompt</span><time id="runBriefTime"></time></div><p id="runBriefText"></p><div class="run-brief-note"><span aria-hidden="true">✓</span><span id="runBriefNote">Already submitted · this is the saved run</span></div>';
+  $('pipeline').before(brief);
+  $('pipeline').setAttribute('role', 'tablist');
+  $('pipeline').setAttribute('aria-label', 'Run steps');
+}
+
+function eventsByStep(run) {
+  const grouped = Object.fromEntries(buildSteps.map(step => [step.key, []]));
+  let current = 'inspect';
+  for (const event of run.events || []) {
+    if (event.kind === 'stage') current = eventStageKeys[String(event.message || '').toLowerCase()] || current;
+    if (event.kind === 'control' && /approv/i.test(event.message || '')) current = 'approve';
+    grouped[current].push(event);
+  }
+  return grouped;
+}
+
+function eventBody(event) {
+  let message = event.message || '';
+  if (event.role && event.kind === 'message') {
+    try {
+      const parsed = JSON.parse(message);
+      message = [parsed.overview, parsed.summary].filter(Boolean).join('\n\n') || message;
+    } catch (_) {}
+  }
+  if (event.kind === 'tool') return `<details class="step-tool"><summary>Tool activity</summary><code>${e(message)}</code></details>`;
+  return `<div class="step-event-copy">${renderMarkdown(message)}</div>`;
+}
+
+function renderStepEvents(events) {
+  return events.map(event => {
+    const who = event.role ? event.role.charAt(0).toUpperCase() + event.role.slice(1) : 'Relay';
+    const date = new Date(event.time);
+    const time = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const kind = event.kind === 'stage' ? 'Stage' : event.kind === 'control' ? 'Decision' : event.kind === 'tool' ? 'Tool' : 'Update';
+    return `<article class="step-event ${e(event.kind || '')}"><div class="step-event-marker" aria-hidden="true"></div><div><div class="step-event-head"><strong>${e(who)}</strong><span>${e(kind)}</span>${time ? `<time datetime="${e(event.time)}">${e(time)}</time>` : ''}</div>${eventBody(event)}</div></article>`;
+  }).join('');
+}
 export function createConversation({
   renderRecovery,
   renderClarification,
@@ -18,11 +101,14 @@ export function createConversation({
   clearImageDraft
 }) {
   let followupImageChat = null;
+  const selectedSteps = new Map();
+  const manualStepRuns = new Set();
   function render() {
     renderHistory();
     updateButtons();
     const r = appState.runs.find(x => x.id === appState.selected);
     document.querySelector('.activity').hidden = !r;
+    document.querySelector('.content').classList.toggle('run-open', !!r);
     renderClarification(r);
     renderRecovery(r);
     if (!r) {
@@ -39,6 +125,7 @@ export function createConversation({
       $('feed').innerHTML = '<div class="empty"><h3>No chat selected.</h3><p>Start a task or select a saved chat.</p></div>';
       return;
     }
+    ensureRunBrief();
     const key = JSON.stringify(r);
     if (key === appState.rendered) return;
     appState.rendered = key;
@@ -62,9 +149,30 @@ export function createConversation({
     $('deleteHistory').hidden = active;
     $('pause').textContent = r.paused ? 'Resume handoffs' : 'Pause handoffs';
     $('simulationBanner').hidden = !r.demo;
-    $('pipeline').innerHTML = ((r.mode || 'build') === 'build' ? [['observing', '1 · Inspect'], ['awaiting_clarification', '2 · Clarify'], ['awaiting_approval', '3 · Approve'], ['building', '4 · Build'], ['reviewing', '5 · Review'], ['fixing', '6 · Refine'], ['done', '7 · Result']] : r.mode === 'plan' ? [['observing', '1 · Inspect'], ['awaiting_clarification', '2 · Clarify'], ['done', '3 · Plan']] : [['observing', '1 · Observe'], ['done', '2 · Report']]).map(([stage, label]) => `<span class="${r.status === stage ? 'current' : ''}">${label}</span>`).join('');
-    $('taskMeta').textContent = `${modeNames[r.mode || 'build']}${(r.mode || 'build') === 'build' ? ' · Round ' + r.round + (r.max_rounds ? ' of ' + r.max_rounds : ' · No round limit') : ''} · ${r.minutes ? r.minutes + ' minute limit' : 'No time limit'}${r.team ? '\nTeam: ' + r.team.name + ' · ' + ((r.mode || 'build') === 'build' ? roleNames : ['observer']).map(role => role + ': ' + providerLabel(r.team.roles[role].provider)).join(' / ') : ''}${r.workspace ? '\n' + ((r.mode || 'build') === 'build' ? 'Working copy: ' : 'Inspected folder: ') + r.workspace : ''}`;
     const finished = terminal.has(r.status);
+    const created = new Date(r.created);
+    $('runBriefLabel').textContent = active ? 'Running prompt' : 'Ran prompt';
+    $('runBriefTime').textContent = Number.isFinite(created.getTime()) ? `Submitted ${created.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : '';
+    $('runBriefTime').dateTime = r.created || '';
+    $('runBriefText').textContent = r.task;
+    $('runBriefNote').textContent = active ? 'In progress · this prompt has already been submitted' : 'Already submitted · this is the saved run';
+
+    const groupedEvents = eventsByStep(r);
+    const steps = (r.mode || 'build') === 'build' ? buildSteps : r.mode === 'plan' ? [buildSteps[0], buildSteps[1], { ...buildSteps[6], label: 'Plan' }] : [{ ...buildSteps[0], label: 'Observe' }, { ...buildSteps[6], label: 'Report' }];
+    $('pipeline').style.setProperty('--run-step-count', steps.length);
+    const availableKeys = new Set(steps.map(step => step.key));
+    const automaticStep = availableKeys.has(stageKeys[r.status]) ? stageKeys[r.status] : steps[steps.length - 1].key;
+    if (!manualStepRuns.has(r.id) || !availableKeys.has(selectedSteps.get(r.id))) selectedSteps.set(r.id, automaticStep);
+    const selectedStep = selectedSteps.get(r.id);
+    $('pipeline').innerHTML = steps.map((step, index) => {
+      const hasActivity = groupedEvents[step.key]?.length > 0;
+      const skipped = finished && !hasActivity && step.key !== 'result';
+      const current = step.key === automaticStep && !finished;
+      const selected = step.key === selectedStep;
+      const state = skipped ? 'Not needed' : current ? 'In progress' : hasActivity || step.key === 'result' && finished ? 'Complete' : 'Not started';
+      return `<button type="button" role="tab" data-run-step="${e(step.key)}" aria-selected="${selected}" aria-controls="feed" tabindex="${selected ? '0' : '-1'}" class="run-step${selected ? ' selected' : ''}${current ? ' current' : ''}${skipped ? ' skipped' : ''}${hasActivity ? ' visited' : ''}" title="${e(step.label)} · ${state}"><span>${index + 1}</span>${e(step.label)}<small>${e(state)}</small></button>`;
+    }).join('');
+    $('taskMeta').textContent = `${modeNames[r.mode || 'build']}${(r.mode || 'build') === 'build' ? ' · Round ' + r.round + (r.max_rounds ? ' of ' + r.max_rounds : ' · No round limit') : ''} · ${r.minutes ? r.minutes + ' minute limit' : 'No time limit'}${r.team ? '\nTeam name: ' + r.team.name + ' · ' + ((r.mode || 'build') === 'build' ? roleNames : ['observer']).map(role => role + ': ' + providerLabel(r.team.roles[role].provider)).join(' / ') : ''}${r.workspace ? '\n' + ((r.mode || 'build') === 'build' ? 'Working copy: ' : 'Inspected folder: ') + r.workspace : ''}`;
     const lastError = [...r.events].reverse().find(event => event.kind === 'error');
     const report = r.summary || lastError?.message || '';
     const shownImages = new Set();
@@ -86,11 +194,18 @@ export function createConversation({
       followupImageChat = r.id;
     }
     const turns = r.turns || [];
-    $('feed').hidden = awaiting || clarifying || $('feedTab').getAttribute('aria-selected') !== 'true';
-    $('feed').innerHTML = turns.map((turn, i) => renderTurn(turn, i)).join('') + renderTurn({
-      ...r,
-      summary: report
-    }, turns.length, true);
+    $('feed').hidden = $('feedTab').getAttribute('aria-selected') !== 'true';
+    if (selectedStep === 'result') {
+      $('feed').innerHTML = turns.map((turn, i) => renderTurn(turn, i)).join('') + renderTurn({
+        ...r,
+        summary: report
+      }, turns.length, true);
+    } else {
+      const step = steps.find(item => item.key === selectedStep);
+      const events = groupedEvents[selectedStep] || [];
+      const plan = selectedStep === 'approve' && r.plan ? `<article class="step-plan"><div class="step-panel-label">Approved plan</div><div class="report-content">${renderMarkdown(r.plan.summary)}</div></article>` : '';
+      $('feed').innerHTML = `<div class="step-panel-heading"><div><span>Step ${steps.indexOf(step) + 1}</span><h3>${e(step?.label || 'Activity')}</h3></div><p>${events.length} saved ${events.length === 1 ? 'event' : 'events'}</p></div>${plan}${events.length ? `<div class="step-timeline">${renderStepEvents(events)}</div>` : `<div class="step-empty"><span aria-hidden="true">—</span><div><strong>${e(step?.empty || 'No activity was saved.')}</strong><p>Relay skipped this step because the run did not need it.</p></div></div>`}`;
+    }
     $('followupForm').hidden = !finished || r.demo || !['done', 'needs_attention'].includes(r.status) && !turns.length;
     $('sendFollowup').disabled = !!activeRun() || appState.loading || !!appState.imageLoading;
     $('followupNotice').textContent = activeRun() ? 'Wait for the active task to finish.' : 'Read-only · uses your Observer model and account' + (r.attachments?.length ? ' · ' + r.attachments.length + ' saved images included' : '');
@@ -110,7 +225,32 @@ export function createConversation({
     $('summary').hidden = true;
     $('summary').textContent = '';
   }
-  function init() {}
+  function selectStep(button) {
+    const run = appState.runs.find(item => item.id === appState.selected);
+    if (!run) return;
+    selectedSteps.set(run.id, button.dataset.runStep);
+    manualStepRuns.add(run.id);
+    $('feedTab').click();
+    appState.rendered = '';
+    render();
+    $('pipeline').querySelector(`[data-run-step="${button.dataset.runStep}"]`)?.focus();
+  }
+  function init() {
+    $('pipeline').addEventListener('click', event => {
+      const button = event.target.closest('[data-run-step]');
+      if (button) selectStep(button);
+    });
+    $('pipeline').addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      const buttons = [...$('pipeline').querySelectorAll('[data-run-step]')];
+      const current = event.target.closest('[data-run-step]');
+      if (!current || !buttons.length) return;
+      event.preventDefault();
+      let index = buttons.indexOf(current);
+      index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      selectStep(buttons[index]);
+    });
+  }
   return {
     init,
     render
