@@ -11,6 +11,7 @@ import { createConversation } from './js/conversation.js';
 import { createFindings } from './js/findings.js';
 import { createTasks } from './js/tasks.js';
 import { createUpdates } from './js/updates.js';
+import { createTaskQueue } from './js/task-queue.js';
 const updates = createUpdates();
 const notifications = createNotifications();
 const recovery = createRecovery({ render: () => conversation.render() });
@@ -38,11 +39,13 @@ const conversation = createConversation({
   clearImageDraft: prefix => attachments.clearImageDraft(prefix)
 });
 const findings = createFindings({
+  renderDraft: () => conversation.render(),
   projectChanged: () => projects.projectChanged(),
   updateTeamCards: () => teams.updateTeamCards(),
   updateTaskMode: () => tasks.updateTaskMode()
 });
 const tasks = createTasks({
+  renderQueue: snapshot => taskQueue.render(snapshot),
   updateTeamCards: () => teams.updateTeamCards(),
   connections: () => teams.connections(),
   selectedProject: () => projects.selectedProject(),
@@ -52,7 +55,14 @@ const tasks = createTasks({
   updateSourceBrief: () => findings.updateSourceBrief(),
   render: () => conversation.render()
 });
-for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates]) feature.init();
+const taskQueue = createTaskQueue({
+  selectedProject: () => projects.selectedProject(),
+  imagePayload: prefix => attachments.imagePayload(prefix),
+  clearImageDraft: prefix => attachments.clearImageDraft(prefix),
+  clearSourceBrief: () => findings.clearSourceBrief(),
+  render: () => conversation.render()
+});
+for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates, taskQueue]) feature.init();
 try {
   const draft = JSON.parse(sessionStorage.getItem('relay.devDraft') || 'null');
   if (draft) {

@@ -3,6 +3,7 @@ import { $, scrollBehavior } from './dom.js';
 import { request } from './api.js';
 import { terminal } from './constants.js';
 export function createTasks({
+  renderQueue,
   updateTeamCards,
   connections,
   selectedProject,
@@ -57,6 +58,7 @@ export function createTasks({
       }
       appState.token = state.token;
       appState.runs = state.runs;
+      renderQueue?.(state.queue);
       if (appState.pendingSource) updateSourceBrief();
       if (appState.selected && !appState.runs.some(r => r.id === appState.selected)) appState.selected = null;
       $('serverState').textContent = 'Local workspace';

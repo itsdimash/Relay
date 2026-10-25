@@ -1076,7 +1076,14 @@ static NSColor *DominantColor(NSString *dataURL) {
     NSString *type = [body[@"type"] isKindOfClass:NSString.class] ? body[@"type"] : @"";
 
     if ([type isEqualToString:@"open"]) {
-        [self.delegate notchPanelRequestsOpenRelay];
+        NSString *runID = [body[@"runId"] isKindOfClass:NSString.class] ? body[@"runId"] : nil;
+        if (runID.length > 0 && runID.length <= 128) {
+            NSString *tab = [@[@"feed", @"changes", @"findings"] containsObject:body[@"tab"]] ? body[@"tab"] : @"feed";
+            NSString *step = [@[@"inspect", @"clarify", @"approve", @"build", @"review", @"refine", @"result"] containsObject:body[@"step"]] ? body[@"step"] : @"result";
+            [self.delegate notchPanelRequestsOpenRelayAt:@{@"run": runID, @"tab": tab, @"step": step}];
+        } else {
+            [self.delegate notchPanelRequestsOpenRelay];
+        }
         [self hideAnimated:YES];
     } else if ([type isEqualToString:@"hide"]) {
         [self hideAnimated:YES];

@@ -36,6 +36,10 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
   let holder = 'observer';
   let timer = null;
   let last = 0;
+  let transitionAt = -10;
+  let transitionFrom = { x: baton.x, y: baton.y };
+  let sceneKey = '';
+  const focus = Object.fromEntries(ROLES.map(role => [role, 1]));
 
   const rect = (x, y, w, h, color) => {
     ctx.fillStyle = color;
@@ -46,6 +50,12 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
   };
 
   function setScene(next) {
+    const key = [next.id || '', next.actor || '', next.terminal || ''].join(':');
+    if (key !== sceneKey) {
+      transitionAt = now() / 1000;
+      transitionFrom = { x: baton.x, y: baton.y };
+      sceneKey = key;
+    }
     scene = { actor: next.actor || null, terminal: next.terminal || null };
     if (ROLES.includes(scene.actor)) holder = scene.actor;
     else if (scene.actor === 'you') holder = 'observer';
@@ -64,9 +74,9 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
   }
 
   function confetti() {
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 16; i++) {
       const color = ['#4fb594', '#f0a63f', '#a18bf0', '#4db6c9', '#fff6c2'][i % 5];
-      particles.push({ x: GATE_X, y: 36, vx: (hash(i) - 0.5) * 2.6, vy: -1 - hash(i + 40) * 1.8, life: 1, decay: 0.012, color, gravity: 0.06 });
+      particles.push({ x: GATE_X, y: 36, vx: (hash(i) - 0.5) * 1.8, vy: -0.8 - hash(i + 40) * 1.4, life: 1, decay: 0.018, color, gravity: 0.04 });
     }
   }
 
@@ -92,14 +102,18 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       a.x += Math.max(-0.9, Math.min(0.9, targetX - a.x));
       a.y += Math.max(-0.7, Math.min(0.7, targetY - a.y));
       a.moving = Math.abs(targetX - a.x) > 0.5 || Math.abs(targetY - a.y) > 0.5;
+      const targetFocus = ROLES.includes(scene.actor) && scene.actor !== role ? 0.42 : 1;
+      focus[role] += (targetFocus - focus[role]) * 0.13;
     }
     // Baton eases to the holder's hand, or rests above the gate when the task is finished.
     const h = agents[holder];
     const tx = scene.terminal === 'done' ? GATE_X : h.x + 5;
     const ty = scene.terminal === 'done' ? 29 : h.y + 15;
-    const distance = Math.abs(tx - baton.x);
-    baton.x += (tx - baton.x) * 0.14;
-    baton.y += (ty - baton.y) * 0.14 - Math.min(2.2, distance * 0.06);
+    const progress = reducedMotion ? 1 : Math.min(1, Math.max(0, (t - transitionAt) / 0.85));
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const arc = Math.sin(progress * Math.PI) * Math.min(17, Math.abs(tx - transitionFrom.x) * 0.22);
+    baton.x = transitionFrom.x + (tx - transitionFrom.x) * eased;
+    baton.y = transitionFrom.y + (ty - transitionFrom.y) * eased - arc;
     baton.trail.push([baton.x, baton.y]);
     if (baton.trail.length > 7) baton.trail.shift();
     for (const role of ROLES) if (scene.actor === role) spawn(role, t);
@@ -115,6 +129,57 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       p.life -= p.decay;
     }
     for (let i = particles.length - 1; i >= 0; i--) if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  function drawAtmosphere(t) {
+    const active = ROLES.includes(scene.actor) ? scene.actor : null;
+    const color = active ? COLORS[active].glow : scene.actor === 'you' ? '#f2b24c' : scene.terminal === 'done' ? '#4fb594' : scene.terminal === 'failed' ? '#ef6b6b' : null;
+    if (!color) return;
+    const x = active ? DESK_X[active] + 17 : GATE_X;
+    const glow = ctx.createRadialGradient(x, 55, 1, x, 55, 46);
+    glow.addColorStop(0, color);
+    glow.addColorStop(1, 'transparent');
+    ctx.globalAlpha = reducedMotion ? 0.13 : 0.13 + Math.sin(t * 1.7) * 0.025;
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 25, W, 65);
+    ctx.globalAlpha = 1;
+    // A single expanding floor ring announces a handoff or terminal state.
+    const p = reducedMotion ? 1 : Math.min(1, Math.max(0, (t - transitionAt) / 1.1));
+    if (p < 1) {
+      ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.5;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.ellipse(x, 72, 4 + p * 32, 2 + p * 10, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawState(t) {
+    const color = scene.actor === 'you' ? '#f2b24c' : scene.terminal === 'done' ? '#7dd9a8' : scene.terminal === 'failed' ? '#ef6b6b' : null;
+    if (!color) return;
+    const lift = reducedMotion ? 0 : Math.round(Math.sin(t * 2) * 0.8);
+    const y = 18 + lift;
+    rect(GATE_X - 7, y - 4, 15, 13, '#18222b');
+    rect(GATE_X - 7, y + 8, 15, 1, color);
+    if (scene.terminal === 'done') glyph(CHECK, GATE_X - 2, y, color);
+    else if (scene.terminal === 'failed') {
+      for (let i = 0; i < 5; i++) {
+        rect(GATE_X - 2 + i, y - 1 + i, 1, 1, color);
+        rect(GATE_X + 2 - i, y - 1 + i, 1, 1, color);
+      }
+    } else {
+      rect(GATE_X, y - 2, 1, 4, color);
+      rect(GATE_X, y + 4, 1, 1, color);
+    }
+    if (scene.terminal === 'done') {
+      for (const role of ROLES) {
+        rect(DESK_X[role] + 13, 48, 1, 1, color);
+        glyph(CHECK, DESK_X[role] + 6, 49, color);
+      }
+    }
   }
 
   function drawBackground(t) {
@@ -190,11 +255,19 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
     if (!reducedMotion) {
       if (working) bob = Math.round(Math.sin(t * 9) * 0.6 + 0.4);
       else if (music) bob = Math.round(Math.sin(t * 6.5 + phase) * 0.5 + 0.5); // nodding to the beat
+      if (scene.terminal === 'done') {
+        const age = t - transitionAt - ROLES.indexOf(role) * 0.12;
+        if (age > 0 && age < 0.7) bob -= Math.round(Math.sin(age / 0.7 * Math.PI) * 3);
+      }
     }
     if (working && !reducedMotion) {
-      // A halo in the agent's colour, so it is clear who has the baton.
-      ctx.globalAlpha = 0.14 + 0.08 * Math.sin(t * 4);
-      rect(x - 8, y - 3, 16, 24, c.glow);
+      // Soft local light keeps the character silhouette crisp.
+      const glow = ctx.createRadialGradient(x, y + 9, 1, x, y + 9, 15);
+      glow.addColorStop(0, c.glow);
+      glow.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = glow;
+      ctx.fillRect(x - 15, y - 6, 30, 30);
       ctx.globalAlpha = 1;
     }
     const blink = !reducedMotion && Math.floor(t * 2.2) % 9 === 0;
@@ -225,7 +298,7 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       ctx.globalAlpha = reducedMotion ? 0.8 : 0.55 + 0.45 * Math.sin(t * 6.5 + phase);
       rect(x - 5, y + 2 + bob, 1, 2, c.glow);
       rect(x + 4, y + 2 + bob, 1, 2, c.glow);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = focus[role];
     }
     // arms: forward while typing, down otherwise
     const armY = working ? y + 9 + bob + (Math.floor(t * 8) % 2) : y + 8;
@@ -259,8 +332,12 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
       lamp = pulse > 0.8 ? '#f2b24c' : '#4a4030';
     }
     if (glow) {
+      const light = ctx.createRadialGradient(GATE_X, 36, 1, GATE_X, 36, 16);
+      light.addColorStop(0, glow[0]);
+      light.addColorStop(1, 'transparent');
       ctx.globalAlpha = glow[1];
-      rect(GATE_X - 12, 30, 24, 14, glow[0]);
+      ctx.fillStyle = light;
+      ctx.fillRect(GATE_X - 16, 20, 32, 32);
       ctx.globalAlpha = 1;
     }
     // The lamp only exists while it means something; an unlit one looked like a stray mark above the door.
@@ -270,6 +347,7 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
   }
 
   function drawBaton() {
+    if (!scene.actor && !scene.terminal) return;
     for (let i = 0; i < baton.trail.length; i++) {
       ctx.globalAlpha = (i / baton.trail.length) * 0.35;
       rect(baton.trail[i][0], baton.trail[i][1], 2, 6, '#fff6c2');
@@ -293,13 +371,24 @@ export function createRoom(canvas, { reducedMotion = false, now = () => performa
 
   function render(t) {
     drawBackground(t);
+    drawAtmosphere(t);
     const seated = role => !agents[role].moving && Math.abs(agents[role].y - SEAT_Y) < 1;
-    for (const role of ROLES) if (seated(role)) drawAgent(role, t);
+    for (const role of ROLES) if (seated(role)) {
+      ctx.save();
+      ctx.globalAlpha = focus[role];
+      drawAgent(role, t);
+      ctx.restore();
+    }
     for (const role of ROLES) {
       drawMonitor(role, scene.actor === role, t);
     }
-    for (const role of ROLES) drawDesk(role);
+    for (const role of ROLES) {
+      drawDesk(role);
+      if (scene.actor === role) rect(DESK_X[role], 58, 34, 1, COLORS[role].glow);
+      if (scene.terminal === 'failed') rect(DESK_X[role] + 3, 54, 12, 1, '#ef6b6b');
+    }
     drawGate(t);
+    drawState(t);
     for (const role of ROLES) if (!seated(role)) drawAgent(role, t);
     if (!scene.actor && !scene.terminal && !reducedMotion) {
       const phase = (t * 0.8) % 3;

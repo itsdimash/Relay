@@ -1,5 +1,6 @@
 """Compact live status for the notch panel: what is running, who is working, and what needs approval."""
 import datetime as dt
+import json
 
 from .contracts import TERMINAL
 
@@ -56,6 +57,57 @@ def seconds_since(started, now):
         return 0
 
 
+def agent_activity(info, role):
+    """Expose one saved update per role, never infer activity from a provider name."""
+    for event in reversed(info.get('events') or []):
+        if event.get('role') != role or not event.get('message') or event.get('kind') == 'stage':
+            continue
+        message = event['message']
+        if event.get('kind') == 'message':
+            try:
+                report = json.loads(message)
+                if isinstance(report, dict):
+                    message = report.get('overview') or report.get('summary') or message
+            except (ValueError, TypeError):
+                pass
+        return {'message': clip(message, 240), 'kind': event.get('kind', ''), 'time': event.get('time', '')}
+    return None
+
+
+def result_counts(info):
+    reports = info.get('builder_reports') or []
+    latest = max(enumerate(reports), key=lambda item: (item[1].get('round', 0), item[0]))[1] if reports else {}
+    checks = latest.get('checks') or []
+    return {
+        'files': len(info.get('files') or []),
+        'findings': len(info.get('findings') or []),
+        'checks': {status: sum(check.get('status') == status for check in checks)
+                   for status in ('passed', 'failed', 'not_run')},
+        'checks_source': 'builder',
+    }
+
+
+def recent_events(info):
+    saved = []
+    for index, event in enumerate(info.get('events') or []):
+        if event.get('kind') not in ('stage', 'message', 'note', 'control', 'review', 'error') or not event.get('message'):
+            continue
+        message = event['message']
+        try:
+            report = json.loads(message)
+            if isinstance(report, dict):
+                message = report.get('overview') or report.get('summary') or message
+        except (ValueError, TypeError):
+            pass
+        text = clip(message, 240)
+        role = event.get('role', '')
+        if saved and saved[-1]['message'] == text and saved[-1]['role'] == role:
+            continue
+        saved.append({'id': str(index), 'time': event.get('time', ''), 'kind': event.get('kind', ''),
+                      'role': role, 'agent': event.get('agent') or role.capitalize() or 'Relay', 'message': text})
+    return saved[-12:][::-1]
+
+
 def describe_run(info, now):
     status = info.get('status', '')
     running = status not in TERMINAL
@@ -76,6 +128,9 @@ def describe_run(info, now):
         'elapsed': seconds_since(info.get('created'), now) if running else 0,
         'team': {role: {'provider': (team.get(role) or {}).get('provider', ''), 'model': (team.get(role) or {}).get('model', '')}
                  for role in ('observer', 'builder', 'reviewer')},
+        'activities': {role: agent_activity(info, role) for role in ('observer', 'builder', 'reviewer')},
+        'result': result_counts(info),
+        'recent_events': recent_events(info),
         'plan': None,
         'question': None,
     }

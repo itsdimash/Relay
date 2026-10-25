@@ -7,6 +7,7 @@ extern NSString *const RelayNotchEnabledKey;
 @protocol RelayNotchPanelDelegate <NSObject>
 // The person pressed "Open Relay" in the panel.
 - (void)notchPanelRequestsOpenRelay;
+- (void)notchPanelRequestsOpenRelayAt:(NSDictionary *)destination;
 @end
 
 @interface RelayNotchPanel : NSObject

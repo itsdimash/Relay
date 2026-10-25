@@ -36,6 +36,20 @@
   <div class="stage">
     <section class="room" aria-label="Your agents">
       <canvas id="room" width="180" height="100" role="img" aria-label="Animated room where your three agents pass work to each other"></canvas>
+      <div class="room-hit-targets" aria-label="Inspect an agent">
+        <button type="button" data-agent="observer" aria-label="Inspect Observer" title="Inspect Observer"></button>
+        <button type="button" data-agent="builder" aria-label="Inspect Builder" title="Inspect Builder"></button>
+        <button type="button" data-agent="reviewer" aria-label="Inspect Reviewer" title="Inspect Reviewer"></button>
+      </div>
+      <div id="handoff" class="handoff" role="status" hidden><span class="handoff-symbol" aria-hidden="true">↗</span><div><strong id="handoffTitle"></strong><span id="handoffDetail"></span></div></div>
+      <button type="button" id="officeMusic" class="office-music" aria-label="Music effects in the office" aria-pressed="true" title="Music effects in the office" hidden>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 11V9a6 6 0 0 1 12 0v2M4 10H3v5h3v-5zm12 0h1v5h-3v-5z"/></svg>
+      </button>
+      <div class="room-roles" aria-label="Agent roles">
+        <button type="button" data-room-role="observer" data-agent="observer" aria-label="Inspect Observer"><i></i>Observer</button>
+        <button type="button" data-room-role="builder" data-agent="builder" aria-label="Inspect Builder"><i></i>Builder</button>
+        <button type="button" data-room-role="reviewer" data-agent="reviewer" aria-label="Inspect Reviewer"><i></i>Reviewer</button>
+      </div>
       <p id="roomLabel" class="room-label" role="status"></p>
     </section>
 
@@ -48,7 +62,32 @@
       <ol id="steps" class="steps" aria-label="Progress"></ol>
       <p id="stepText" class="step-text"></p>
       <div id="limits" class="limits" aria-label="Usage left"></div>
+      <div class="info-activity" id="infoActivity">
+      <details id="notchQueue" class="notch-queue" hidden>
+        <summary><span id="notchQueueTitle">Next task</span><span id="notchQueueCount"></span></summary>
+        <p id="notchQueueBrief"></p><span id="notchQueueMeta" class="detail-state"></span>
+        <button type="button" class="btn quiet" id="startNextTask">Start task</button>
+        <p id="notchQueueNotice" class="detail-state"></p>
+        <p id="notchQueueError" class="error" role="alert"></p>
+      </details>
+      <section id="agentCard" class="agent-detail" aria-labelledby="agentCardTitle" hidden>
+        <div class="detail-heading"><strong id="agentCardTitle"></strong><button type="button" id="closeAgent" aria-label="Close agent details">×</button></div>
+        <span id="agentCardState" class="detail-state"></span>
+        <p id="agentCardMessage"></p>
+        <button type="button" class="detail-link" id="openAgentStep">Open this step <span aria-hidden="true">↗</span></button>
+      </section>
+      <section id="resultCard" class="notch-result" aria-labelledby="resultTitle" hidden>
+        <strong id="resultTitle"></strong>
+        <p id="resultCounts"></p>
+        <span id="resultEvidence" class="detail-state"></span>
+        <div class="result-actions"><button type="button" class="btn quiet" id="openChanges">Changes ↗</button><button type="button" class="btn quiet" id="openResult">Result ↗</button></div>
+      </section>
       <p id="last" class="last"></p>
+      <details id="notchHistory" class="notch-history">
+        <summary>Recent activity <span id="notchHistoryCount">0</span></summary>
+        <ol id="notchHistoryList" aria-label="Recent task events"></ol>
+        <p id="notchHistoryEmpty" class="detail-state">No saved events yet.</p>
+      </details>
       <div id="approval" class="approval" hidden>
         <p id="planSummary" class="plan-summary"></p>
         <ul id="planChecks" class="plan-checks"></ul>
@@ -62,6 +101,7 @@
       <footer class="foot">
         <button type="button" class="btn quiet" id="open">Open Relay</button>
       </footer>
+      </div>
     </section>
 
     <section id="notes" class="notes" aria-label="Notes and to-dos">

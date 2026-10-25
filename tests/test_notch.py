@@ -76,6 +76,44 @@ class DescribeTests(unittest.TestCase):
         self.assertEqual(notch.snapshot([new_done], NOW)['run']['id'], 'b')
         self.assertIsNone(notch.snapshot([], NOW)['run'])
 
+    def test_role_activity_keeps_same_provider_roles_distinct_and_reads_structured_updates(self):
+        events = [
+            {'role': 'observer', 'kind': 'message', 'message': '{"overview":"Inspected the form","summary":"Plan"}', 'time': 'saved'},
+            {'role': 'builder', 'kind': 'tool', 'message': 'Run focused tests'},
+            {'role': 'reviewer', 'kind': 'review', 'message': 'No remaining findings'},
+        ]
+        run = notch.describe_run(info(events=events), NOW)
+        self.assertEqual(run['activities']['observer']['message'], 'Inspected the form')
+        self.assertEqual(run['activities']['observer']['time'], 'saved')
+        self.assertEqual(run['activities']['builder']['message'], 'Run focused tests')
+        self.assertEqual(run['activities']['reviewer']['message'], 'No remaining findings')
+
+    def test_result_counts_use_latest_builder_round_and_do_not_count_tests_from_prose(self):
+        reports = [
+            {'round': 1, 'checks': [{'status': 'failed'}]},
+            {'round': 2, 'checks': [{'status': 'failed'}]},
+            {'round': 2, 'checks': [{'status': 'passed', 'details': '11 tests passed'}, {'status': 'not_run'}]},
+        ]
+        run = notch.describe_run(info('done', files=['a.py', 'b.py'], findings=[], builder_reports=reports), NOW)
+        self.assertEqual(run['result']['files'], 2)
+        self.assertEqual(run['result']['checks'], {'passed': 1, 'failed': 0, 'not_run': 1})
+        self.assertEqual(run['result']['checks_source'], 'builder')
+
+    def test_older_tasks_do_not_get_invented_checks_or_activity(self):
+        run = notch.describe_run(info('done'), NOW)
+        self.assertTrue(all(value is None for value in run['activities'].values()))
+        self.assertEqual(sum(run['result']['checks'].values()), 0)
+
+    def test_recent_events_are_bounded_deduplicated_and_use_saved_timestamps(self):
+        events = [{'kind':'tool','role':'observer','message':'raw command'}]
+        events += [{'kind':'message','role':'observer','agent':'Codex','time':f'time-{i}', 'message':json.dumps({'overview':f'Update {i}'})} for i in range(14)]
+        events.append(events[-1].copy())
+        run = notch.describe_run(info(events=events), NOW)
+        self.assertEqual(len(run['recent_events']),12)
+        self.assertEqual(run['recent_events'][0]['message'],'Update 13')
+        self.assertEqual(run['recent_events'][0]['time'],'time-13')
+        self.assertFalse(any(event['kind']=='tool' for event in run['recent_events']))
+
 
 class NotchHTTPTests(unittest.TestCase):
     def setUp(self):
@@ -115,7 +153,7 @@ class NotchHTTPTests(unittest.TestCase):
         self.assertEqual(data['run']['plan']['id'], 'p1')
 
     def test_panel_page_and_assets_are_served(self):
-        for path, kind in [('/notch', 'text/html'), ('/notch.css', 'text/css'), ('/notch.js', 'javascript'), ('/js/notch-room.js', 'javascript')]:
+        for path, kind in [('/notch', 'text/html'), ('/notch.css', 'text/css'), ('/notch.js', 'javascript'), ('/js/notch-room.js', 'javascript'), ('/js/notch-collaboration.js', 'javascript'), ('/js/notch-activity.js', 'javascript'), ('/js/task-queue.js', 'javascript')]:
             status, headers, body = self.get(path)
             self.assertEqual(status, 200)
             self.assertIn(kind, headers['Content-Type'])

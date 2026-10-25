@@ -38,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'error': 'Invalid host'}, 403)
         path = urlparse(self.path).path
         if path == '/api/state':
-            return self.respond({'runs': sorted(self.app.states(), key=lambda x: x['created'], reverse=True), 'token': self.app.TOKEN, 'dev': self.app.dev_metadata()})
+            return self.respond({'runs': sorted(self.app.states(), key=lambda x: x['created'], reverse=True), 'token': self.app.TOKEN, 'dev': self.app.dev_metadata(), 'queue': self.app.queue_snapshot()})
         if path == '/api/dev':
             metadata = self.app.dev_metadata()
             return self.respond(metadata if metadata else {'error': 'Development mode is disabled'}, 200 if metadata else 404)
@@ -81,10 +81,13 @@ class Handler(BaseHTTPRequestHandler):
                 infos = [run.info if isinstance(run, self.app.Run) else run for run in self.app.RUNS.values()]
                 data = notch.snapshot(infos)
             data['token'] = self.app.TOKEN
+            data['queue'] = self.app.queue_snapshot()
             data['limits'] = self.app.limits.snapshot()
             return self.respond(data)
         if path == '/api/limits':
             return self.respond(self.app.limits.snapshot())
+        if path == '/api/queue':
+            return self.respond(self.app.queue_snapshot())
         if path == '/api/notes':
             try:
                 return self.respond({'notes': self.app.read_notes()})
@@ -110,7 +113,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'teams', 'updates', 'notch-room', 'limits')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'notch-room', 'notch-collaboration', 'notch-activity', 'limits')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -145,13 +148,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlparse(self.path).path
             length = int(self.headers.get('Content-Length', 0))
-            limit = 24 * 1024 * 1024 if path in ('/api/run','/api/followup') else 128000
+            limit = 24 * 1024 * 1024 if path in ('/api/run','/api/followup','/api/queue/add') else 128000
             if not 0 < length <= limit:
                 raise ValueError('Request exceeds the allowed size.')
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError('Request body must be a JSON object.')
             path = urlparse(self.path).path
+            if path == '/api/queue/add':
+                return self.respond(self.app.add_queued_task(payload), 201)
+            if path == '/api/queue/remove':
+                return self.respond(self.app.remove_queued_task(payload.get('id')))
+            if path == '/api/queue/move':
+                return self.respond(self.app.move_queued_task(payload.get('id'), payload.get('direction')))
+            if path == '/api/queue/start':
+                return self.respond(self.app.start_queued_task(payload.get('id')), 201)
             if path == '/api/recover':
                 return self.respond(self.app.recover_run(payload.get('id'), payload.get('checkpoint_id')), 201)
             if path == '/api/teams/save':

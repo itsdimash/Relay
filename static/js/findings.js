@@ -2,6 +2,7 @@ import { state as appState } from './state.js';
 import { $, scrollBehavior } from './dom.js';
 import { defaultTeam, sourceFindings } from './constants.js';
 export function createFindings({
+  renderDraft,
   projectChanged,
   updateTeamCards,
   updateTaskMode
@@ -53,6 +54,9 @@ export function createFindings({
       $('taskMode').value = action === 'planFindings' ? 'plan' : 'build';
       updateTaskMode();
       $('task').value = (action === 'planFindings' ? 'Create an implementation plan for' : 'Verify and fix') + ' the selected findings from the earlier report:\n\n' + indexes.map(i => `${sourceFindings(run)[i].id}: ${sourceFindings(run)[i].problem}`).join('\n') + '\n\nStay within these findings. Verify each against the current code and explain any finding that is no longer valid.';
+      appState.selected = null;
+      appState.rendered = '';
+      renderDraft?.();
       $('composer').scrollIntoView({
         behavior: scrollBehavior()
       });

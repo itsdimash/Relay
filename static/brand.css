@@ -217,6 +217,22 @@ label { font-weight: 600; font-size: 14px; color: var(--ink); }
 .usage-left .limit[data-level="critical"] .limit-bar i { background: #c8483f; }
 .usage-left .limit[data-level="none"] .limit-bar i { width: 0; }
 .usage-left .limit-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-to-queue { width: 100%; margin-top: 9px; }
+.queue-workspace { margin: 0 0 22px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: #f8faf9; }
+.queue-workspace > summary { display: flex; align-items: center; gap: 9px; min-height: 30px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.queue-workspace > summary::before { content: '↳'; color: var(--brand); }
+#queueCount { padding: 1px 7px; border-radius: 5px; background: #e3ede7; color: var(--brand); font-size: 11px; }
+.queue-workspace > summary small { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; }
+.queue-item { margin-top: 10px; border-top: 1px solid var(--border); }
+.queue-item > summary { display: flex; align-items: center; gap: 12px; min-height: 50px; cursor: pointer; list-style: none; }
+.queue-position { flex: none; min-width: 30px; color: var(--brand); font-size: 11px; }
+.queue-item > summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 550; }
+.queue-item > summary > span:last-child { margin-left: auto; flex: none; color: var(--muted); font-size: 11px; }
+.queue-item-detail { padding: 0 0 12px 42px; }
+.queue-item-detail > p { margin-bottom: 8px; white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
+.queue-item-actions { display: flex; gap: 7px; margin-top: 12px; }
+.queue-start { margin-left: auto; color: var(--brand); border-color: #abc5b8; }
+@media (max-width:600px) { .queue-workspace > summary small { display: none; } .queue-item > summary > span:last-child { display:none; } .queue-item-detail { padding-left: 0; } }
 
 /* A saved run is a record, not a second copy of the new-task form. */
 .content.run-open > .title-row,

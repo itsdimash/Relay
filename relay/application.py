@@ -4,7 +4,7 @@ import secrets
 import threading
 
 from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, providers, recovery, registry, reports
-from . import contracts
+from . import contracts, task_queue
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
 from .workflow import Run
@@ -95,6 +95,12 @@ class Application:
     add_note = notes.add_note
     set_note_done = notes.set_done
     remove_note = notes.remove_note
+
+    queue_snapshot = task_queue.queue_snapshot
+    add_queued_task = task_queue.add_task
+    remove_queued_task = task_queue.remove_task
+    move_queued_task = task_queue.move_task
+    start_queued_task = task_queue.start_task
 
     # Files waiting on the notch panel's Deliver shelf (paths only).
     read_deliver_items = deliver.read_items

@@ -134,6 +134,19 @@ static NSColor *RelayColor(unsigned int rgb) {
     [self showMainWindow];
 }
 
+- (void)notchPanelRequestsOpenRelayAt:(NSDictionary *)destination {
+    NSURLComponents *components = [[NSURLComponents alloc] init];
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSString *key in @[@"run", @"tab", @"step"]) {
+        [items addObject:[NSURLQueryItem queryItemWithName:key value:destination[key]]];
+    }
+    components.queryItems = items;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:@[components.percentEncodedQuery ?: @""] options:0 error:nil];
+    NSString *argument = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+    if (argument) [self.webView evaluateJavaScript:[NSString stringWithFormat:@"(function(h){if(window.location.hash.slice(1)===h){window.dispatchEvent(new Event('hashchange'));}else{window.location.hash=h;}})((%@)[0]);", argument] completionHandler:nil];
+    [self showMainWindow];
+}
+
 - (void)showMainWindow {
     if (self.window.miniaturized) [self.window deminiaturize:nil];
     [self.window makeKeyAndOrderFront:nil];

@@ -103,7 +103,26 @@ export function createConversation({
   let followupImageChat = null;
   const selectedSteps = new Map();
   const manualStepRuns = new Set();
+  let appliedDestination = null;
+  function applyDestination() {
+    const hash = location.hash;
+    if (!hash || hash === appliedDestination) return;
+    const destination = new URLSearchParams(hash.slice(1));
+    const id = destination.get('run');
+    if (!appState.runs.some(run => run.id === id)) return;
+    const step = destination.get('step');
+    appState.selected = id;
+    if (buildSteps.some(item => item.key === step)) {
+      selectedSteps.set(id, step);
+      manualStepRuns.add(id);
+    }
+    const tab = destination.get('tab');
+    (tab === 'changes' ? $('changesTab') : tab === 'findings' ? $('findingsTab') : $('feedTab')).click();
+    appState.rendered = '';
+    appliedDestination = hash;
+  }
   function render() {
+    applyDestination();
     renderHistory();
     updateButtons();
     const r = appState.runs.find(x => x.id === appState.selected);
@@ -236,6 +255,11 @@ export function createConversation({
     $('pipeline').querySelector(`[data-run-step="${button.dataset.runStep}"]`)?.focus();
   }
   function init() {
+    window.addEventListener('hashchange', () => {
+      appliedDestination = null;
+      render();
+      if (appState.selected) document.querySelector('.activity').scrollIntoView({ block: 'start', behavior: 'auto' });
+    });
     $('pipeline').addEventListener('click', event => {
       const button = event.target.closest('[data-run-step]');
       if (button) selectStep(button);

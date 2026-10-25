@@ -1,6 +1,8 @@
 /** Notch panel: polls the local engine for the active task and shows it, with music, notes, files to deliver and the agent office. */
 import { createRoom } from './js/notch-room.js';
 import { limitRow } from './js/limits.js';
+import { createCollaboration } from './js/notch-collaboration.js';
+import { createActivity } from './js/notch-activity.js';
 
 const $ = id => document.getElementById(id);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -13,6 +15,12 @@ const tell = message => {
     /* Running in a normal browser. */
   }
 };
+const openRun = destination => {
+  if (native) tell({ type: 'open', ...destination });
+  else window.open('/#' + new URLSearchParams({ run: destination.runId, tab: destination.tab, step: destination.step }), '_blank', 'noopener');
+};
+const collaboration = createCollaboration({ reducedMotion, openRun });
+const activity = createActivity({post, openRun});
 
 const LINES = {
   idle: ['Relay is idle', 'Your agents are waiting for a task.'],
@@ -49,6 +57,15 @@ let inputFocused = false;
 let holding = false;
 let music = null;
 let musicArt = '';
+let officeMusicEnabled = true;
+try { officeMusicEnabled = localStorage.getItem('relay.officeMusic') !== 'off'; } catch (_) {}
+$('officeMusic').setAttribute('aria-pressed', String(officeMusicEnabled));
+$('officeMusic').addEventListener('click', () => {
+  officeMusicEnabled = !officeMusicEnabled;
+  $('officeMusic').setAttribute('aria-pressed', String(officeMusicEnabled));
+  try { localStorage.setItem('relay.officeMusic', officeMusicEnabled ? 'on' : 'off'); } catch (_) {}
+  room.setMusic(!!music?.playing && officeMusicEnabled);
+});
 
 const format = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
@@ -62,6 +79,12 @@ function actorKey(run) {
 function render(run) {
   const key = actorKey(run);
   $('panel').dataset.actor = key;
+  for (const label of document.querySelectorAll('[data-room-role]')) {
+    const active = label.dataset.roomRole === key;
+    label.toggleAttribute('data-active', active);
+    if (active) label.setAttribute('aria-current', 'step');
+    else label.removeAttribute('aria-current');
+  }
   $('panel').toggleAttribute('data-working', !!run?.running && !run.paused);
   tabs.task.toggleAttribute('data-live', !!run?.running && !run.paused);
   updateGlow();
@@ -100,10 +123,11 @@ function render(run) {
     }));
   }
   if (!plan) $('approvalError').textContent = '';
-  room.setScene({ actor: run?.running ? run.actor : null, terminal: key === 'done' ? 'done' : key === 'failed' ? 'failed' : null });
+  room.setScene({ actor: run?.running && !run.paused ? run.actor : null, terminal: key === 'done' ? 'done' : key === 'failed' ? 'failed' : null, id: run?.id });
   elapsedBase = run?.running ? run.elapsed : 0;
   elapsedAt = Date.now();
   tickTimer();
+  collaboration.update(run);
 }
 
 function tickTimer() {
@@ -158,6 +182,7 @@ async function poll() {
     current = data.run;
     if (JSON.stringify(current) !== before) render(current);
     renderLimits(data.limits);
+    activity.update(data.queue, current);
     notifyNative(current);
   } catch (_) {
     $('status').textContent = 'Relay is not responding';
@@ -201,6 +226,8 @@ function setView(next, { focus = true } = {}) {
   if (!VIEWS.includes(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
   view = next;
   $('panel').dataset.view = view;
+  if (view === 'office' && !document.hidden) room.start();
+  else room.stop();
   updateGlow();
   for (const [name, tab] of Object.entries(tabs)) tab.setAttribute('aria-selected', String(name === view));
   if (view === 'notes' && focus) {
@@ -691,7 +718,8 @@ function updateGlow() {
   else glow = working ? 'agent' : playing ? 'music' : '';
   if (glow) panel.dataset.glow = glow;
   else delete panel.dataset.glow;
-  room.setMusic(playing);
+  room.setMusic(playing && officeMusicEnabled);
+  $('officeMusic').hidden = !playing;
 }
 
 function renderMusic() {
@@ -793,6 +821,14 @@ document.addEventListener('keydown', event => {
 });
 
 room.start();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && view === 'office') room.start();
+  else room.stop();
+});
+window.addEventListener('pagehide', () => {
+  room.stop();
+  collaboration.hideHandoff();
+});
 render(null);
 renderMusic();
 renderDeliver();
