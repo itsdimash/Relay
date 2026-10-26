@@ -37,6 +37,14 @@ export function createFindings({
       const run = appState.runs.find(r => r.id === appState.selected),
         indexes = [...document.querySelectorAll('[name="selectedFinding"]:checked')].map(input => Number(input.value));
       if (!run || !indexes.length) return;
+      if (!$('followupForm').hidden) {
+        // Continue in this chat: the agent acts on it as the next turn of the conversation.
+        const plan = action === 'planFindings';
+        $('followupQuestion').value = (plan ? 'Create an implementation plan for' : 'Verify and fix') + ' the selected findings from the earlier report:\n\n' + indexes.map(i => `${sourceFindings(run)[i].id}: ${sourceFindings(run)[i].problem}`).join('\n') + '\n\nStay within these findings. Verify each against the current code and explain any finding that is no longer valid.';
+        $('followupForm').scrollIntoView({ behavior: scrollBehavior() });
+        $('followupQuestion').focus({ preventScroll: true });
+        return;
+      }
       const project = run.original_project || run.project;
       if (![...$('project').options].some(option => option.value === project)) {
         const option = new Option('Report project · ' + project, project);

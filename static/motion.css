@@ -17,6 +17,12 @@ dialog[open] { animation: relay-dialog var(--motion-state) var(--motion-ease); }
 dialog[open]::backdrop { animation: relay-backdrop var(--motion-state) ease-out; }
 .history-menu:not([hidden]) { transform-origin: top right; animation: relay-menu var(--motion-fast) var(--motion-ease); }
 .history-feedback:not([hidden]) { animation: relay-feedback var(--motion-state) var(--motion-ease); }
+.working-dots i { animation: relay-working 1.2s ease-in-out infinite; }
+.working-dots i:nth-child(2) { animation-delay: .16s; }
+.working-dots i:nth-child(3) { animation-delay: .32s; }
+.working-bar { animation: relay-sweep 1.6s ease-in-out infinite; }
+@keyframes relay-sweep { 0% { background-position: -40% 0; } 100% { background-position: 140% 0; } }
+@keyframes relay-working { 0%, 80%, 100% { opacity: .35; transform: scale(.8); } 40% { opacity: 1; transform: scale(1.15); } }
 @keyframes relay-dialog { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
 @keyframes relay-backdrop { from { opacity: 0; } to { opacity: 1; } }
 @keyframes relay-menu { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }

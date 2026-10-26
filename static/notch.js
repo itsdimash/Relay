@@ -29,7 +29,7 @@ const LINES = {
   observing: ['Observer is inspecting', 'Reading your project and planning the change.'],
   awaiting_clarification: ['Needs your answers', 'The Observer has a few questions.'],
   awaiting_approval: ['Needs your approval', 'Nothing is edited until you approve.'],
-  building: ['Builder is working', 'Editing the working copy.'],
+  building: ['Builder is working', 'Editing your folder.'],
   fixing: ['Builder is refining', 'Applying the reviewer’s findings.'],
   reviewing: ['Reviewer is checking', 'Reading the actual changes.'],
   done: ['Finished', 'The result is ready in Relay.'],
@@ -86,6 +86,7 @@ function render(run) {
     else label.removeAttribute('aria-current');
   }
   $('panel').toggleAttribute('data-working', !!run?.running && !run.paused);
+  $('panel').toggleAttribute('data-attention', !!run?.running && (!!run.plan || run.status === 'awaiting_clarification'));
   tabs.task.toggleAttribute('data-live', !!run?.running && !run.paused);
   updateGlow();
   const [status, line] = LINES[run?.status] || LINES.idle;
@@ -123,7 +124,7 @@ function render(run) {
     }));
   }
   if (!plan) $('approvalError').textContent = '';
-  room.setScene({ actor: run?.running && !run.paused ? run.actor : null, terminal: key === 'done' ? 'done' : key === 'failed' ? 'failed' : null, id: run?.id });
+  room.setScene({ actor: run?.running && !run.paused ? run.actor : null, terminal: key === 'done' ? 'done' : key === 'failed' ? 'failed' : null, id: run?.id, auto: !!run?.auto, steps: run?.steps || [] });
   elapsedBase = run?.running ? run.elapsed : 0;
   elapsedAt = Date.now();
   tickTimer();
@@ -174,6 +175,120 @@ function renderLimits(limits) {
   );
 }
 
+// Banners that drop in from the notch. Music has its own animations and is not announced here.
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/></svg>',
+  bell: '<svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/></svg>',
+  help: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1.2 1-1.2 1.9M12 17h.01"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path class="draw" d="M7.5 12.5l3 3 6-6.5"/></svg>',
+  alert: '<svg viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4M12 17h.01"/></svg>',
+  cross: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+  sync: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.5-4M4 13a8 8 0 0 0 14.5 4M4 4.5V8h3.5M20 19.5V16h-3.5"/></svg>',
+  spark: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>'
+};
+const TOASTS = {
+  start: { icon: 'play' }, approve: { icon: 'bell' }, question: { icon: 'help' }, approved: { icon: 'check' },
+  done: { icon: 'check', burst: true }, attention: { icon: 'alert' }, failed: { icon: 'cross' }, retry: { icon: 'sync' }, decision: { icon: 'spark' }
+};
+let toastTimer = null;
+let toastLeave = null;
+let flashTimer = null;
+function toast(kind, title, detail = '') {
+  const spec = TOASTS[kind];
+  if (!spec) return;
+  clearTimeout(toastTimer);
+  clearTimeout(toastLeave);
+  const box = $('toast');
+  box.hidden = false;
+  box.dataset.kind = kind;
+  box.removeAttribute('data-show');
+  box.removeAttribute('data-leaving');
+  $('toastIcon').innerHTML = ICONS[spec.icon];
+  $('toastTitle').textContent = title;
+  $('toastDetail').textContent = detail;
+  $('toastDetail').hidden = !detail;
+  void box.offsetWidth; // restart the entrance animation
+  box.setAttribute('data-show', '');
+  $('panel').dataset.flash = kind;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => delete $('panel').dataset.flash, 1400);
+  const burst = $('toastBurst');
+  burst.replaceChildren();
+  if (spec.burst && !reducedMotion) {
+    const colors = ['#4fb594', '#f0a63f', '#a18bf0', '#4db6c9', '#fff6c2'];
+    for (let i = 0; i < 22; i++) {
+      const angle = (i / 22) * Math.PI * 2 + Math.random() * 0.4;
+      const distance = 50 + Math.random() * 70;
+      const dot = document.createElement('i');
+      dot.style.setProperty('--dx', `${Math.cos(angle) * distance * 1.5}px`);
+      dot.style.setProperty('--dy', `${Math.sin(angle) * distance * 0.8 + 24}px`);
+      dot.style.setProperty('--rot', `${Math.round(Math.random() * 540 - 270)}deg`);
+      dot.style.setProperty('--c', colors[i % colors.length]);
+      burst.append(dot);
+    }
+  }
+  toastTimer = setTimeout(() => {
+    box.setAttribute('data-leaving', '');
+    toastLeave = setTimeout(() => { box.hidden = true; box.removeAttribute('data-show'); box.removeAttribute('data-leaving'); burst.replaceChildren(); }, reducedMotion ? 0 : 280);
+  }, spec.burst ? 4200 : 3400);
+}
+
+const announced = { id: '', status: '', event: -1, first: true };
+const brief = (text, limit = 90) => {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  return flat.length > limit ? flat.slice(0, limit - 1).trimEnd() + '…' : flat;
+};
+function announce(run) {
+  if (!run || run.demo) {
+    announced.id = '';
+    return;
+  }
+  const events = run.recent_events || [];
+  const newest = events.reduce((highest, event) => Math.max(highest, Number(event.id)), -1);
+  const startup = announced.first;
+  announced.first = false;
+  if (run.id !== announced.id) {
+    // A different task: remember where it stands and say hello, unless the app only just opened.
+    announced.id = run.id;
+    announced.status = run.status;
+    announced.event = newest;
+    if (run.running && !startup) {
+      toast('start', run.auto ? 'Auto mode started' : 'Task started', brief(run.title));
+      room.pulse('start');
+    }
+    return;
+  }
+  for (const event of [...events].reverse()) {
+    if (Number(event.id) <= announced.event) continue;
+    const message = event.message || '';
+    const retry = message.match(/Retrying in (\d+) seconds \(try (\d+) of (\d+)\)/);
+    if (event.kind === 'control' && /^Auto mode approved the plan/.test(message)) {
+      toast('approved', 'Plan approved', 'Auto mode approved it. The Builder is starting.');
+      room.pulse('approved');
+    } else if (event.kind === 'control' && /^Auto mode decided/.test(message)) {
+      toast('decision', 'Auto mode decided', brief(message.replace(/^Auto mode decided\s*/, ''), 110));
+      room.pulse('decision');
+    } else if (retry) {
+      toast('retry', 'Retrying after an error', `In ${retry[1]} seconds · try ${retry[2]} of ${retry[3]}`);
+      room.pulse('retry');
+    }
+  }
+  announced.event = Math.max(announced.event, newest);
+  if (run.status === announced.status) return;
+  const previous = announced.status;
+  announced.status = run.status;
+  if (run.status === 'awaiting_approval') toast('approve', 'Needs your approval', 'Nothing is edited until you approve.');
+  else if (run.status === 'awaiting_clarification') toast('question', 'Needs your answers', 'The Observer has a few questions.');
+  else if (previous === 'awaiting_approval' && ['building', 'preparing'].includes(run.status)) {
+    toast('approved', 'Plan approved', 'The Builder is starting.');
+    room.pulse('approved');
+  } else if (run.status === 'done') {
+    const files = run.result?.files;
+    toast('done', run.accepted ? 'Finished with open items' : 'Finished', Number.isInteger(files) && files > 0 ? `${files} changed ${files === 1 ? 'file' : 'files'} · ready to review` : 'The result is ready in Relay.');
+  } else if (run.status === 'needs_attention') toast('attention', 'Needs your decision', 'Open Relay to see what is left.');
+  else if (run.status === 'failed') toast('failed', 'Stopped with an error', brief(run.summary) || 'Open Relay to see what happened.');
+}
+
 async function poll() {
   try {
     const data = await fetch('/api/notch', { cache: 'no-store' }).then(r => r.json());
@@ -181,6 +296,7 @@ async function poll() {
     const before = JSON.stringify(current);
     current = data.run;
     if (JSON.stringify(current) !== before) render(current);
+    announce(current);
     renderLimits(data.limits);
     activity.update(data.queue, current);
     notifyNative(current);

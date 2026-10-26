@@ -48,11 +48,11 @@ def parameters(app, payload):
     mode = payload.get('mode', 'build')
     if mode not in app.TASK_MODES:
         raise ValueError('Choose a valid task mode.')
-    rounds, minutes = payload.get('rounds', 3), payload.get('minutes', 20)
+    rounds, minutes = payload.get('rounds', 0), payload.get('minutes', 0)
     if type(rounds) is not int or type(minutes) is not int or not 0 <= rounds <= 5 or not 0 <= minutes <= 120:
         raise ValueError('Choose valid review rounds and a time limit.')
     return dict(task=task.strip(), project=str(Path(project).expanduser().resolve()), mode=mode,
-                rounds=rounds, minutes=minutes, team=app.validate_team(payload.get('team') or app.DEFAULT_TEAM))
+                rounds=rounds, minutes=minutes, auto=payload.get('auto') is True, team=app.validate_team(payload.get('team') or app.DEFAULT_TEAM))
 
 
 def add_task(app, payload):
@@ -133,7 +133,7 @@ def start_task(app, ident):
         settings = parameters(app, saved)  # Revalidate the folder and settings at admission.
         images = app.decode_images(saved.get('images', []))
         run = app.Run(settings['task'], Path(settings['project']), settings['rounds'], settings['minutes'],
-                      team=settings['team'], mode=settings['mode'], context=saved.get('context', ''),
+                      team=settings['team'], mode=settings['mode'], auto=settings['auto'], context=saved.get('context', ''),
                       source=saved.get('source'), attachments=images)
         # The durable run exists before the brief is consumed. Nothing auto-resumes after restart.
         write_queue(app, items[1:])

@@ -44,7 +44,7 @@ export function createTaskQueue({ selectedProject, imagePayload, clearImageDraft
       try {
         const saved = await request('/api/queue/add', {
           ...(state.pendingSource || {}),task:$('task').value,project:selectedProject(),
-          mode:$('taskMode').value,team:state.currentTeam,rounds:Number($('rounds').value),minutes:Number($('minutes').value),images:imagePayload('task')
+          mode:$('taskMode').value,team:state.currentTeam,rounds:Number($('rounds').value),minutes:Number($('minutes').value),auto:$('autoMode').checked&&$('taskMode').value!=='observe',images:imagePayload('task')
         });
         $('task').value = '';
         clearImageDraft('task');

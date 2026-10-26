@@ -14,5 +14,6 @@ export const state = {
     followup: []
   },
   imageLoading: 0,
-  pendingSource: null
+  pendingSource: null,
+  buildError: null
 };

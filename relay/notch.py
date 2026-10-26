@@ -123,6 +123,8 @@ def describe_run(info, now):
         'max_rounds': info.get('max_rounds', 0),
         'actor': ACTORS.get(status),
         'paused': bool(info.get('paused')),
+        'auto': bool(info.get('auto')),
+        'accepted': bool(info.get('auto_accepted')),
         'steps': steps_for(info),
         'last': last_message(info),
         'elapsed': seconds_since(info.get('created'), now) if running else 0,

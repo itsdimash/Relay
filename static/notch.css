@@ -1,6 +1,6 @@
 /* Notch panel: a dark panel that hangs from the notch in three sizes.
    pill: a track just changed (440 wide shrinks to ~380 x 78); compact: the pointer is on the notch (440 x ~202);
-   full: double-tap right Command, or something needs you (640 x ~284). The app sets --notch-h / --notch-w. */
+   full: double-tap right Command, or something needs you (780 x ~344). The app sets --notch-h / --notch-w. */
 :root {
   --bg: #000;
   --bg-2: #10141a;
@@ -11,6 +11,7 @@
   --brand-ink: #062a20;
   --amber: #f2b24c;
   --red: #ef6b6b;
+  --purple: #a18bf0;
   --observer: #4db6c9;
   --builder: #f0a63f;
   --reviewer: #a18bf0;
@@ -71,7 +72,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .panel[data-view="notes"] .notes { display: flex; }
 .panel[data-view="deliver"] .deliver { display: flex; }
 .panel[data-view="music"] .player { display: flex; }
-.panel[data-view="office"] .stage { grid-template-columns: 320px minmax(0, 1fr); gap: 16px; }
+.panel[data-view="office"] .stage { grid-template-columns: min(420px, 57%) minmax(0, 1fr); gap: 18px; }
 .panel[data-mode="full"][data-view="task"] .info { width: 100%; max-width: 540px; justify-self: center; }
 
 /* Room (Office) */
@@ -80,7 +81,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .office-music svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.3; fill: none; }
 .office-music[aria-pressed="true"] { color: var(--brand); background: #14251f; }
 .office-music:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-#room { width: 100%; aspect-ratio: 9 / 5; image-rendering: pixelated; border-radius: 12px; border: 1px solid var(--line); background: #0b0f15; display: block; transition: box-shadow .5s, border-color .5s; }
+#room { width: 100%; aspect-ratio: 280 / 156; image-rendering: pixelated; border-radius: 14px; border: 1px solid var(--line); background: #0b0f15; display: block; box-shadow: 0 12px 34px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .04); transition: box-shadow .5s, border-color .5s; }
 .panel[data-working] #room { border-color: color-mix(in srgb, var(--agent) 40%, transparent); box-shadow: 0 0 22px color-mix(in srgb, var(--agent) 12%, transparent); }
 .room-label { margin: 0; color: var(--muted); font-size: 12px; text-align: center; min-height: 18px; }
 .panel[data-view="office"] .room-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -94,7 +95,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .panel[data-working] .room-roles > button:not([data-active]) { opacity: .65; }
 .room-roles > button:hover, .room-roles > button[aria-pressed="true"] { color: var(--text); opacity: 1 !important; }
 .room-roles > button:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
-.panel[data-view="office"] .info { padding: 4px 0 2px; overflow-y: auto; scrollbar-width: thin; }
+.panel[data-view="office"] .info { padding: 4px 0 2px 10px; overflow-y: auto; scrollbar-width: thin; }
 .panel[data-view="office"] .status { color: var(--agent); }
 .panel[data-view="office"] .steps li.current { background: var(--agent); box-shadow: 0 0 8px color-mix(in srgb, var(--agent) 50%, transparent); }
 .panel[data-view="office"] .info > * { flex-shrink: 0; }
@@ -105,7 +106,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .panel[data-view="office"] .room { animation: office-enter 420ms cubic-bezier(.16, 1, .3, 1) both; }
 .panel[data-view="office"] .info { animation: office-enter 420ms cubic-bezier(.16, 1, .3, 1) 45ms both; }
 @keyframes office-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-.room-hit-targets { position: absolute; top: 0; left: 0; width: 100%; aspect-ratio: 9 / 5; pointer-events: none; }
+.room-hit-targets { position: absolute; top: 0; left: 0; width: 100%; aspect-ratio: 280 / 156; pointer-events: none; }
 .room-hit-targets button { position: absolute; top: 34%; height: 42%; width: 25%; border: 1px solid transparent; border-radius: 7px; background: transparent; pointer-events: auto; transition: border-color 180ms, background-color 180ms; }
 .room-hit-targets button:nth-child(1) { left: 5%; width: 38%; }
 .room-hit-targets button:nth-child(2) { left: 49%; }
@@ -138,8 +139,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .panel[data-mode="compact"] .notch-result > p { margin: 4px 0; }
 .panel[data-mode="compact"] .result-actions { margin-top: 6px; }
 .panel[data-mode="compact"] .result-actions .btn { padding-block: 4px; }
-.info { overflow-y: auto; scrollbar-width: thin; }
+.info { overflow-y: auto; scrollbar-width: thin; /* a scrolling box also clips sideways: leave room for the status dot's pulse ring */ padding-left: 10px; margin-left: -10px; }
 .panel .info > .info-activity { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+/* In the Office the info column already scrolls; a second scroll box inside it can hide the top of a card. */
+.panel[data-view="office"] .info > .info-activity { flex: none; min-height: auto; overflow: visible; }
 .panel[data-history-open] .steps, .panel[data-history-open] .step-text,
 .panel[data-queue-open] .steps, .panel[data-queue-open] .step-text { display: none; }
 .panel[data-history-open] .title, .panel[data-queue-open] .title { -webkit-line-clamp: 1; margin-bottom: 3px; }
@@ -224,8 +227,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-.btn.primary { background: var(--amber); border-color: var(--amber); color: #2a1a00; }
-.btn.primary:hover { background: #f7c46e; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.btn.primary:hover { background: #66c7a6; }
+.btn.danger { border-color: color-mix(in srgb, var(--red) 60%, transparent); color: var(--red); }
+.btn.danger:hover { background: color-mix(in srgb, var(--red) 16%, transparent); }
+.btn.danger:focus-visible { outline-color: var(--red); }
 .foot { margin-top: auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; }
 
 /* Notes */
@@ -352,7 +358,68 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .pill-title { font-size: 13px; font-weight: 650; }
 .pill-artist { font-size: 11.5px; color: var(--muted); }
 
+/* Notifications: a banner drops in from the notch, the panel's edge flashes, and the Office reacts */
+.toast { position: absolute; z-index: 6; left: 50%; top: calc(var(--notch-h) + 10px); transform: translate(-50%, 0); --toast: var(--brand);
+  display: flex; align-items: center; gap: 12px; max-width: min(88%, 480px); padding: 9px 18px 9px 10px; border-radius: 999px; overflow: hidden; pointer-events: none;
+  background: linear-gradient(180deg, rgba(28, 34, 43, .94), rgba(13, 17, 23, .96)); border: 1px solid color-mix(in srgb, var(--toast) 55%, transparent);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .6), 0 0 26px color-mix(in srgb, var(--toast) 28%, transparent), inset 0 1px 0 rgba(255, 255, 255, .09); backdrop-filter: blur(14px) saturate(1.4); }
+.toast[data-kind="approve"], .toast[data-kind="question"], .toast[data-kind="attention"], .toast[data-kind="retry"] { --toast: var(--amber); }
+.toast[data-kind="failed"] { --toast: var(--red); }
+.toast[data-kind="decision"] { --toast: var(--purple); }
+.toast[data-show] { animation: toast-in .6s cubic-bezier(.2, 1.15, .3, 1) both, toast-glow 1.5s ease-in-out .5s 2; }
+.toast[data-leaving] { animation: toast-out .26s ease-in both; }
+.toast::after { content: ""; position: absolute; inset: 0; pointer-events: none; transform: translateX(-120%); background: linear-gradient(100deg, transparent 32%, rgba(255, 255, 255, .24) 50%, transparent 68%); }
+.toast[data-show]::after { animation: toast-shine 1.1s ease-out .35s 1; }
+.toast-icon { position: relative; flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--toast); background: color-mix(in srgb, var(--toast) 22%, transparent); }
+.toast-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.toast-icon::before { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid var(--toast); opacity: 0; }
+.toast[data-show] .toast-icon::before { animation: toast-ring 1.2s ease-out .2s 2; }
+.toast-text { min-width: 0; }
+.toast-text strong { display: block; font-size: 13px; line-height: 1.25; font-weight: 650; }
+.toast-text span { display: block; max-width: 330px; color: var(--muted); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast[data-show][data-kind="approve"] .toast-icon svg, .toast[data-show][data-kind="attention"] .toast-icon svg { animation: bell-swing .9s ease-in-out .3s 2; transform-origin: 50% 15%; }
+.toast[data-show][data-kind="question"] .toast-icon svg { animation: bob .7s ease-in-out .3s 3; }
+.toast[data-show][data-kind="retry"] .toast-icon svg { animation: spin 1.1s linear infinite; }
+.toast[data-show][data-kind="decision"] .toast-icon svg { animation: twinkle .8s ease-in-out infinite alternate; }
+.toast[data-show][data-kind="start"] .toast-icon svg { animation: nudge .8s ease-in-out .3s 2; }
+.toast[data-show][data-kind="failed"] .toast-icon { animation: shake .5s ease-in-out .3s 1; }
+.toast[data-kind="done"] .toast-icon path.draw, .toast[data-kind="approved"] .toast-icon path.draw { stroke-dasharray: 20; stroke-dashoffset: 20; }
+.toast[data-show][data-kind="done"] .toast-icon path.draw, .toast[data-show][data-kind="approved"] .toast-icon path.draw { animation: draw .5s ease-out .35s forwards; }
+.toast-burst { position: absolute; z-index: 6; left: 50%; top: calc(var(--notch-h) + 26px); width: 0; height: 0; pointer-events: none; }
+.toast-burst i { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 2px; background: var(--c); opacity: 0; animation: burst 1.05s cubic-bezier(.1, .7, .3, 1) forwards; }
+.panel[data-mode="pill"] .toast, .panel[data-mode="pill"] .toast-burst { display: none; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -28px) scale(.8); filter: blur(6px); } 55% { filter: blur(0); } to { opacity: 1; transform: translate(-50%, 0) scale(1); filter: blur(0); } }
+@keyframes toast-out { to { opacity: 0; transform: translate(-50%, -14px) scale(.94); filter: blur(4px); } }
+@keyframes toast-glow { 50% { box-shadow: 0 10px 34px rgba(0, 0, 0, .6), 0 0 42px color-mix(in srgb, var(--toast) 52%, transparent), inset 0 1px 0 rgba(255, 255, 255, .12); } }
+@keyframes toast-shine { to { transform: translateX(120%); } }
+@keyframes toast-ring { from { opacity: .8; transform: scale(.7); } to { opacity: 0; transform: scale(1.8); } }
+@keyframes bell-swing { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(16deg); } 40% { transform: rotate(-13deg); } 60% { transform: rotate(8deg); } 80% { transform: rotate(-4deg); } }
+@keyframes bob { 50% { transform: translateY(-3px); } }
+@keyframes nudge { 50% { transform: translateX(3px) scale(1.12); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes twinkle { from { transform: scale(.85) rotate(-8deg); opacity: .75; } to { transform: scale(1.15) rotate(8deg); opacity: 1; } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes burst { from { opacity: 1; transform: translate(0, 0) rotate(0) scale(1); } to { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(.35); } }
+/* The panel's edge flashes once for an event, and breathes while something waits for you */
+.panel::after { content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none; opacity: 0; --flash: var(--brand);
+  box-shadow: inset 0 0 0 1.5px var(--flash), inset 0 0 52px color-mix(in srgb, var(--flash) 38%, transparent); }
+.panel[data-flash="failed"] { --flash: var(--red); }
+.panel[data-flash="approve"], .panel[data-flash="question"], .panel[data-flash="attention"], .panel[data-flash="retry"] { --flash: var(--amber); }
+.panel[data-flash="decision"] { --flash: var(--purple); }
+.panel[data-flash]::after { animation: flash 1.3s ease-out both; }
+.panel[data-attention]::after { --flash: var(--amber); animation: breathe 2.6s ease-in-out infinite; }
+@keyframes flash { 0% { opacity: 0; } 16% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes breathe { 0%, 100% { opacity: .15; } 50% { opacity: .85; } }
+/* The Office frame reacts to the state of the run */
+.panel[data-actor="you"] #room { animation: room-call 2.2s ease-in-out infinite; }
+.panel[data-actor="failed"] #room { animation: shake .5s ease-in-out 1; }
+@keyframes room-call { 50% { box-shadow: 0 12px 34px rgba(0, 0, 0, .55), 0 0 30px color-mix(in srgb, var(--amber) 38%, transparent), inset 0 0 0 1px rgba(255, 255, 255, .04); } }
+
 @media (prefers-reduced-motion: reduce) {
+  .toast, .toast[data-show], .toast[data-leaving], .toast::after, .toast-icon::before, .toast-icon svg, .toast-icon, .toast-burst i, .panel::after, .panel[data-flash]::after, .panel[data-attention]::after, .panel[data-actor="you"] #room, .panel[data-actor="failed"] #room { animation: none !important; }
+  .toast-icon path.draw { stroke-dashoffset: 0 !important; }
+  .panel[data-attention]::after { opacity: .5; }
   .panel[data-view="office"] .room, .panel[data-view="office"] .info { animation: none; }
   .room-roles > button, .room-roles i, #room, .room-hit-targets button { transition: none; }
   .handoff, .handoff[data-leaving], .agent-detail, .notch-result { animation: none; }

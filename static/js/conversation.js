@@ -71,6 +71,21 @@ function eventsByStep(run) {
   return grouped;
 }
 
+// Agents' tool calls and provider logs are noise. They stay saved on disk but are never shown;
+// the timeline keeps their comments. The Observer's final report is shown once, in the Result.
+const isHiddenWork = event => !!event.role && (['tool', 'log'].includes(event.kind) || event.role === 'observer' && event.kind === 'review');
+
+const workingStages = {
+  observing: ['inspect', 'Observer is working…', 'Reading your project. Comments appear here as it goes.'],
+  building: ['build', 'Builder is working…', 'Editing your files. Comments appear here as it goes.'],
+  reviewing: ['review', 'Reviewer is checking…', 'Reading the changed files and the Builder’s report.'],
+  fixing: ['refine', 'Builder is fixing…', 'Applying the Reviewer’s findings.']
+};
+
+function workingIndicator(title = 'Observer is working…', text = 'Reading your project. The result appears here when it is ready.') {
+  return `<div class="observer-working" role="status" aria-live="polite"><span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span><div><strong>${e(title)}</strong><p>${e(text)}</p></div><span class="working-bar" aria-hidden="true"></span></div>`;
+}
+
 function eventBody(event) {
   let message = event.message || '';
   if (event.role && event.kind === 'message') {
@@ -145,12 +160,12 @@ export function createConversation({
       return;
     }
     ensureRunBrief();
-    const key = JSON.stringify(r);
+    const key = JSON.stringify({ ...r, events: (r.events || []).filter(event => !isHiddenWork(event)) });
     if (key === appState.rendered) return;
     appState.rendered = key;
     const active = !terminal.has(r.status);
     $('runTitle').textContent = r.demo ? 'Example collaboration' : (r.conversation_title || r.task).slice(0, 100);
-    $('runStatus').textContent = r.demo && r.status === 'done' ? 'Example complete' : r.status === 'done' && (r.mode || 'build') !== 'build' ? 'Report ready' : r.paused && active ? 'Pause after current step' : labels[r.status] || r.status;
+    $('runStatus').textContent = r.demo && r.status === 'done' ? 'Example complete' : r.status === 'done' && r.auto_accepted ? 'Finished with open items' : r.status === 'done' && r.chat ? 'Replied' : r.status === 'done' && (r.mode || 'build') !== 'build' ? 'Report ready' : r.paused && active ? 'Pause after current step' : labels[r.status] || r.status;
     $('runStatus').className = 'badge ' + r.status;
     const awaiting = r.status === 'awaiting_approval';
     const clarifying = r.status === 'awaiting_clarification';
@@ -173,12 +188,13 @@ export function createConversation({
     $('runBriefLabel').textContent = active ? 'Running prompt' : 'Ran prompt';
     $('runBriefTime').textContent = Number.isFinite(created.getTime()) ? `Submitted ${created.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : '';
     $('runBriefTime').dateTime = r.created || '';
-    $('runBriefText').textContent = r.task;
+    $('runBriefText').textContent = r.chat && r.turns?.length ? r.turns[0].task : r.task;
     $('runBriefNote').textContent = active ? 'In progress · this prompt has already been submitted' : 'Already submitted · this is the saved run';
 
     const groupedEvents = eventsByStep(r);
-    const steps = (r.mode || 'build') === 'build' ? buildSteps : r.mode === 'plan' ? [buildSteps[0], buildSteps[1], { ...buildSteps[6], label: 'Plan' }] : [{ ...buildSteps[0], label: 'Observe' }, { ...buildSteps[6], label: 'Report' }];
+    const steps = r.chat ? [{ ...buildSteps[6], label: 'Reply' }] : (r.mode || 'build') === 'build' ? buildSteps : r.mode === 'plan' ? [buildSteps[0], buildSteps[1], { ...buildSteps[6], label: 'Plan' }] : [{ ...buildSteps[0], label: 'Observe' }, { ...buildSteps[6], label: 'Report' }];
     $('pipeline').style.setProperty('--run-step-count', steps.length);
+    $('pipeline').hidden = !!r.chat;
     const availableKeys = new Set(steps.map(step => step.key));
     const automaticStep = availableKeys.has(stageKeys[r.status]) ? stageKeys[r.status] : steps[steps.length - 1].key;
     if (!manualStepRuns.has(r.id) || !availableKeys.has(selectedSteps.get(r.id))) selectedSteps.set(r.id, automaticStep);
@@ -191,7 +207,7 @@ export function createConversation({
       const state = skipped ? 'Not needed' : current ? 'In progress' : hasActivity || step.key === 'result' && finished ? 'Complete' : 'Not started';
       return `<button type="button" role="tab" data-run-step="${e(step.key)}" aria-selected="${selected}" aria-controls="feed" tabindex="${selected ? '0' : '-1'}" class="run-step${selected ? ' selected' : ''}${current ? ' current' : ''}${skipped ? ' skipped' : ''}${hasActivity ? ' visited' : ''}" title="${e(step.label)} · ${state}"><span>${index + 1}</span>${e(step.label)}<small>${e(state)}</small></button>`;
     }).join('');
-    $('taskMeta').textContent = `${modeNames[r.mode || 'build']}${(r.mode || 'build') === 'build' ? ' · Round ' + r.round + (r.max_rounds ? ' of ' + r.max_rounds : ' · No round limit') : ''} · ${r.minutes ? r.minutes + ' minute limit' : 'No time limit'}${r.team ? '\nTeam name: ' + r.team.name + ' · ' + ((r.mode || 'build') === 'build' ? roleNames : ['observer']).map(role => role + ': ' + providerLabel(r.team.roles[role].provider)).join(' / ') : ''}${r.workspace ? '\n' + ((r.mode || 'build') === 'build' ? 'Working copy: ' : 'Inspected folder: ') + r.workspace : ''}`;
+    $('taskMeta').textContent = `${r.chat ? 'Chat' : modeNames[r.mode || 'build']}${r.auto ? ' · Auto mode' : ''}${(r.mode || 'build') === 'build' ? ' · Round ' + r.round + (r.max_rounds ? ' of ' + r.max_rounds : ' · No round limit') : ''} · ${r.minutes ? r.minutes + ' minute limit' : 'No time limit'}${r.team ? '\nTeam name: ' + r.team.name + ' · ' + ((r.mode || 'build') === 'build' ? roleNames : ['observer']).map(role => role + ': ' + providerLabel(r.team.roles[role].provider)).join(' / ') : ''}${r.workspace ? '\n' + ((r.mode || 'build') === 'build' ? 'Edited folder: ' : 'Inspected folder: ') + r.workspace : ''}`;
     const lastError = [...r.events].reverse().find(event => event.kind === 'error');
     const report = r.summary || lastError?.message || '';
     const shownImages = new Set();
@@ -204,7 +220,8 @@ export function createConversation({
       const provider = turn.team?.roles[role]?.provider;
       const author = turn.status === 'failed' ? 'Relay' : provider ? providerLabel(provider) : 'Relay';
       const question = index > 0 ? `<div class="followup-question"><span>You</span><p>${e(turn.task)}</p></div>` : '';
-      const body = current && !finished ? `<div class="empty"><h3>${e(labels[r.status] || 'Your team is working…')}</h3><p>The final result will appear here when this task finishes.</p></div>` : turn.summary ? `<article class="event final-report"><div class="avatar ${e(author.toLowerCase())}">${author === 'Claude' ? 'Cl' : author === 'Codex' ? 'Cx' : 'r'}</div><div class="event-body"><div class="event-head"><strong>${e(author)}</strong><span>${turn.status === 'failed' ? 'Task could not finish' : index > 0 ? 'Follow-up answer' : 'Final result'}</span></div>${renderReportBrief(turn)}<details class="report-evidence" ${!turn.overview && turn.summary.length < 1200 ? 'open' : ''}><summary>Full report &amp; evidence</summary><div class="event-text report-content">${renderMarkdown(turn.summary)}</div></details></div></article>` : '<div class="empty"><p>This task ended before a final report was saved.</p></div>';
+      const chatBody = !turn.chat ? '' : current && !finished ? workingIndicator('Working on it…', 'The agent may read files, edit them and run commands. Its answer appears here.') : turn.summary ? `<article class="event final-report chat-reply"><div class="avatar ${e(author.toLowerCase())}">${author === 'Claude' ? 'Cl' : author === 'Codex' ? 'Cx' : 'r'}</div><div class="event-body"><div class="event-head"><strong>${e(author)}</strong><span>${turn.status === 'failed' ? 'Could not reply' : 'Reply'}</span></div><div class="event-text report-content">${renderMarkdown(turn.summary)}</div>${(turn.files || []).length ? `<p class="chat-changes">Changed ${turn.files.length} ${turn.files.length === 1 ? 'file' : 'files'} in your folder. <button type="button" class="secondary" data-open-changes>View changes</button></p>` : ''}</div></article>` : '';
+      const body = chatBody || (current && !finished ? `<div class="empty"><h3>${e(labels[r.status] || 'Your team is working…')}</h3><p>The final result will appear here when this task finishes.</p></div>` : turn.summary ? `<article class="event final-report"><div class="avatar ${e(author.toLowerCase())}">${author === 'Claude' ? 'Cl' : author === 'Codex' ? 'Cx' : 'r'}</div><div class="event-body"><div class="event-head"><strong>${e(author)}</strong><span>${turn.status === 'failed' ? 'Task could not finish' : (turn.mode || 'build') === 'build' ? 'Build result' : turn.mode === 'plan' ? 'Plan' : index > 0 ? 'Follow-up answer' : 'Final result'}</span></div>${renderReportBrief(turn)}<details class="report-evidence" ${(turn.mode || 'build') !== 'build' || !turn.overview && turn.summary.length < 1200 || turn.summary.includes('```') ? 'open' : ''}><summary>Full report</summary><div class="event-text report-content">${renderMarkdown(turn.summary)}</div></details></div></article>` : '<div class="empty"><p>This task ended before a final report was saved.</p></div>');
       const images = savedImages(turn);
       return question + (images ? '<div class="saved-images">' + images + '</div>' : '') + body;
     };
@@ -215,26 +232,38 @@ export function createConversation({
     const turns = r.turns || [];
     $('feed').hidden = $('feedTab').getAttribute('aria-selected') !== 'true';
     if (selectedStep === 'result') {
+      const allTurns = [...turns, r];
+      const lastPlan = allTurns.findLastIndex(turn => turn.mode === 'plan' && !turn.chat && turn.status === 'done' && turn.summary);
+      const hasPlan = lastPlan >= 0 && lastPlan > allTurns.findLastIndex(turn => turn.mode === 'build');
+      const buildBar = hasPlan && r.status === 'done' && !r.demo && finished ? `<div class="plan-next"><div><strong>Ready to build this plan?</strong><p>Relay builds it directly in your project folder, and the Reviewer checks the result. Choosing Build approves the plan, including anything you agreed in this chat. Or keep chatting, or stop here.</p>${appState.buildError?.id === r.id ? `<p class="form-error" role="alert">${e(appState.buildError.message)}</p>` : ''}</div><button type="button" class="primary" id="buildPlan"${activeRun() ? ' disabled' : ''}>Build this plan <span aria-hidden="true">→</span></button></div>` : '';
       $('feed').innerHTML = turns.map((turn, i) => renderTurn(turn, i)).join('') + renderTurn({
         ...r,
         summary: report
-      }, turns.length, true);
+      }, turns.length, true) + buildBar;
     } else {
       const step = steps.find(item => item.key === selectedStep);
       const events = groupedEvents[selectedStep] || [];
+      const shownEvents = events.filter(event => !isHiddenWork(event));
+      const stageWork = workingStages[r.status];
+      const working = !!stageWork && !finished && stageWork[0] === selectedStep;
       const plan = selectedStep === 'approve' && r.plan ? `<article class="step-plan"><div class="step-panel-label">Approved plan</div><div class="report-content">${renderMarkdown(r.plan.summary)}</div></article>` : '';
-      $('feed').innerHTML = `<div class="step-panel-heading"><div><span>Step ${steps.indexOf(step) + 1}</span><h3>${e(step?.label || 'Activity')}</h3></div><p>${events.length} saved ${events.length === 1 ? 'event' : 'events'}</p></div>${plan}${events.length ? `<div class="step-timeline">${renderStepEvents(events)}</div>` : `<div class="step-empty"><span aria-hidden="true">—</span><div><strong>${e(step?.empty || 'No activity was saved.')}</strong><p>Relay skipped this step because the run did not need it.</p></div></div>`}`;
+      const feed = $('feed');
+      const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 120;
+      const emptyText = events.length ? 'No comments were left for this step.' : step?.empty || 'No activity was saved.';
+      feed.innerHTML = `<div class="step-panel-heading"><div><span>Step ${steps.indexOf(step) + 1}</span><h3>${e(step?.label || 'Activity')}</h3></div><p>${shownEvents.length} saved ${shownEvents.length === 1 ? 'event' : 'events'}</p></div>${plan}${shownEvents.length ? `<div class="step-timeline">${renderStepEvents(shownEvents)}</div>` : working ? '' : `<div class="step-empty"><span aria-hidden="true">—</span><div><strong>${e(emptyText)}</strong>${events.length ? '' : '<p>Relay skipped this step because the run did not need it.</p>'}</div></div>`}${working ? workingIndicator(stageWork[1], stageWork[2]) : ''}`;
+      if (working && nearBottom) feed.scrollTop = feed.scrollHeight;
     }
     $('followupForm').hidden = !finished || r.demo || !['done', 'needs_attention'].includes(r.status) && !turns.length;
     $('sendFollowup').disabled = !!activeRun() || appState.loading || !!appState.imageLoading;
-    $('followupNotice').textContent = activeRun() ? 'Wait for the active task to finish.' : 'Read-only · uses your Observer model and account' + (r.attachments?.length ? ' · ' + r.attachments.length + ' saved images included' : '');
-    const changeRun = (r.mode || 'build') === 'build' ? r : [...(r.turns || [])].reverse().find(turn => turn.mode === 'build') || r;
+    $('followupNotice').textContent = activeRun() ? 'Wait for the active task to finish.' : 'Acts right away · can edit your folder · uses your Builder model and account' + (r.attachments?.length ? ' · ' + r.attachments.length + ' saved images included' : '');
+    const changedByTurn = turn => (turn.mode || 'build') === 'build' || turn.chat && (turn.files || []).length > 0;
+    const changeRun = [r, ...[...(r.turns || [])].reverse()].find(changedByTurn) || r;
     $('fileCount').textContent = changeRun.files.length;
-    $('changes').innerHTML = (changeRun.mode || 'build') === 'build' ? renderChangeReview({
+    $('changes').innerHTML = changedByTurn(changeRun) ? renderChangeReview({
       ...changeRun,
       id: r.id,
       export_complete: finished && changeRun.export_complete
-    }) : '<p class="muted">Read-only task. Editing tools are disabled; existing project changes are not recorded as task edits.</p>';
+    }) : '<p class="muted">Nothing has been changed in this chat yet. When the agent edits your files, the changes appear here.</p>';
     const findings = sourceFindings(r);
     $('findingCount').textContent = findings.length;
     $('findings').innerHTML = findings.length ? findings.map((f, index) => `<article class="finding"><label class="finding-choice"><input type="checkbox" name="selectedFinding" value="${index}" ${active || r.demo ? 'disabled' : ''}><span>Select ${e(f.id)} for a new task</span></label><h3><span class="priority ${reportPriority(f.priority)}">${f.priority ? e(f.priority) : 'Unrated'}</span>${e(f.id)} · ${e(f.problem)}</h3><code>${e(f.file)}</code><p><strong>Evidence</strong>\n${e(f.evidence)}</p><p><strong>Requested change</strong>\n${e(f.requested_change)}</p></article>`).join('') : '<p class="muted">No open findings recorded. The task status indicates whether a review has finished.</p>';
@@ -255,6 +284,25 @@ export function createConversation({
     $('pipeline').querySelector(`[data-run-step="${button.dataset.runStep}"]`)?.focus();
   }
   function init() {
+    document.addEventListener('click', event => {
+      if (event.target.closest('[data-open-changes]')) $('changesTab').click();
+    });
+    document.addEventListener('click', async event => {
+      const button = event.target.closest('[data-copy-code]');
+      if (!button) return;
+      const text = button.closest('.report-code')?.querySelector('pre code')?.textContent || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = 'Copied';
+      } catch (_) {
+        button.textContent = 'Press Cmd+C';
+        const range = document.createRange();
+        range.selectNodeContents(button.closest('.report-code').querySelector('pre code'));
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+      }
+      setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+    });
     window.addEventListener('hashchange', () => {
       appliedDestination = null;
       render();

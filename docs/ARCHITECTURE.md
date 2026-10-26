@@ -11,7 +11,7 @@ flowchart TB
     HTTP --> Runner[One active Run worker]
     Runner --> Claude[Claude Code subprocess: assigned role]
     Runner --> Codex[Codex subprocess: assigned role]
-    Runner --> Git[Git: detached task worktree]
+    Runner --> Git[Git: private baseline store]
     Runner --> Storage[Local task state and logs]
     Registry --> Storage
     Claude --> ProviderA[Configured Claude provider]
@@ -91,7 +91,7 @@ The development supervisor already watches package Python files recursively. Tes
 A `Run` owns its task metadata, cancellation event, handoff gate, process reference, and optional deadline.
 
 1. Check installation and sign-in for providers used by the selected mode.
-2. For Build & review, require a clean repository root and create a detached worktree from `HEAD`. Observe only and Plan only use the existing folder directly, without Git checks or worktree creation.
+2. For Build & review, work in the project folder directly and, just before the Builder first runs, record a baseline of its files in a private Git store (`--git-dir` under the data folder, `--work-tree` the project). Diffs, the patch and the Reviewer fingerprint compare against it; no Git repository or clean tree is required. Observe only and Plan only use the existing folder directly, without Git checks or worktree creation.
 3. Ask the observer to inspect source and return observation notes and acceptance checks.
 4. Wait for explicit user approval of the Observer’s plan, then ask the builder to implement, or address the previous review's findings, and report checks.
 5. Capture the tracked diff and untracked file list.
@@ -171,7 +171,7 @@ The folder API can navigate folders accessible to the server's OS user. It is no
 
 Claude uses restricted mode, `dontAsk`, and an empty strict MCP configuration. Its read roles receive only read tools; its builder also receives Edit, Write, and Bash. Explicitly allowed Bash execution does not impose an OS sandbox equivalent to Codex. Codex uses `read-only` for observer/reviewer and `workspace-write` for builder, with normal installed configuration. No bypass flags are supplied.
 
-Git worktrees separate source edits but are not security sandboxes. Project content, dependency setup, Codex configuration, hooks, network access, and provider behavior remain trusted inputs. Publishing restrictions in prompts are instructions, not independently enforced command allowlists. Relay stores potentially private code in logs and sends relevant context to configured agent providers.
+Builds edit the project folder directly; the baseline records changes for review but is not a sandbox and does not roll anything back. Project content, dependency setup, Codex configuration, hooks, network access, and provider behavior remain trusted inputs. Publishing restrictions in prompts are instructions, not independently enforced command allowlists. Relay stores potentially private code in logs and sends relevant context to configured agent providers.
 
 ## Known design limits
 
@@ -192,7 +192,7 @@ relay/
   providers.py      # Claude/Codex launch arguments and event decoding
   processes.py      # subprocess lifecycle, cancellation, deadlines
   storage.py        # projects, snapshots, and event persistence
-  workspaces.py     # Git validation, worktree creation, and diffs
+  git_ops.py        # Baseline creation, diffs, and complete patch export
   http.py           # request validation and response routing
 server.py           # small launcher
 ```

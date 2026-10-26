@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import threading
 
-from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, providers, recovery, registry, reports
+from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, notify, providers, recovery, registry, reports
 from . import contracts, task_queue
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
@@ -61,6 +61,7 @@ class Application:
     now = staticmethod(reports.now)
     source_findings = staticmethod(reports.source_findings)
     report_context = staticmethod(reports.report_context)
+    plan_from_conversation = staticmethod(reports.plan_from_conversation)
     reported_checks = staticmethod(reports.reported_checks)
     report_metadata = staticmethod(reports.report_metadata)
     validate_questions = staticmethod(reports.validate_questions)
@@ -70,6 +71,7 @@ class Application:
     git = staticmethod(git_ops.git)
     capture_file_reviews = staticmethod(git_ops.capture_file_reviews)
     complete_patch = staticmethod(git_ops.complete_patch)
+    create_baseline = staticmethod(git_ops.create_baseline)
     git_common_directory = staticmethod(git_ops.git_common_directory)
 
     # Provider discovery, capability-limited commands, and response adapters.
@@ -88,6 +90,9 @@ class Application:
     write_projects = registry.write_projects
     remove_project = registry.remove_project
     folder_choices = staticmethod(registry.folder_choices)
+
+    # System notification for tasks that run while the person is away.
+    notify = staticmethod(notify.send)
 
     # Quick notes and to-dos shown in the notch panel.
     read_notes = notes.read_notes

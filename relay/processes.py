@@ -88,6 +88,7 @@ class ProcessControl:
                 pass
         threading.Thread(target=feed, daemon=True).start()
         messages, result, ended, errors, provider_failed = [], None, set(), [], False
+        self.final_message = ''
         try:
             while len(ended) < 2:
                 self.check()
@@ -122,6 +123,7 @@ class ProcessControl:
                     if typ == 'item.completed' and item.get('type') == 'agent_message':
                         message = item.get('text', '')
                         messages.append(message)
+                        self.final_message = message
                         self.emit(agent, 'message', message)
                     elif typ in ('item.started', 'item.completed') and item.get('type') in ('command_execution', 'file_change'):
                         self.emit(agent, 'tool', item.get('command') or json.dumps(item.get('changes', [])), detail=item.get('aggregated_output', '')[-12000:])
@@ -143,6 +145,7 @@ class ProcessControl:
                         result = event.get('structured_output')
                         if event.get('result'):
                             messages.append(event['result'])
+                            self.final_message = event['result']
             process.wait(timeout=5)
             self.check()
             if process.returncode or provider_failed:

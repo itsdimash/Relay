@@ -24,10 +24,27 @@ def report_context(source, indexes=None):
         context += '\nScope is limited to these selected findings and the current user request.'
     else:
         turns = source.get('turns', []) + [source]
-        context = 'Previous conversation, provided as reference for this follow-up question:\n' + '\n\n'.join('User: '+t['task']+'\nReport: '+t.get('summary','') + ('\nClarification answers: '+json.dumps(t['clarifications'],ensure_ascii=False) if t.get('clarifications') else '') for t in turns)
+        context = 'Previous conversation, provided as context for this request:\n' + '\n\n'.join('User: '+t['task']+'\nReport: '+t.get('summary','') + ('\nClarification answers: '+json.dumps(t['clarifications'],ensure_ascii=False) if t.get('clarifications') else '') for t in turns)
     if len(context) > 90000:
         raise ValueError('This conversation is too long to carry forward. Start a new task with the relevant details.')
     return context
+
+
+def plan_from_conversation(source):
+    """The latest finished Plan report plus everything agreed in the chat after it, so it can be built without planning again."""
+    turns = list(source.get('turns', [])) + [source]
+    for index in range(len(turns) - 1, -1, -1):
+        turn = turns[index]
+        if turn.get('mode') == 'plan' and not turn.get('chat') and turn.get('status') == 'done' and (turn.get('summary') or '').strip():
+            summary = turn['summary'].strip()
+            agreed = [t for t in turns[index + 1:] if (t.get('chat') or t.get('mode') == 'observe') and t.get('status') == 'done'
+                      and (t.get('task') or '').strip() and (t.get('summary') or '').strip()]
+            if agreed:
+                summary += ('\n\n---\n\n## Changes and decisions agreed in the conversation after this plan\n\n'
+                            'These are part of what to build, and they take precedence over the plan above wherever they conflict.\n\n'
+                            + '\n\n'.join(f"### {n}. You said\n\n{t['task'].strip()[:4000]}\n\nReply:\n\n{t['summary'].strip()[:4000]}" for n, t in enumerate(agreed, 1)))
+            return dict(summary=summary[:60000], findings=turn.get('findings') or [], acceptance_checks=turn.get('acceptance_checks') or [])
+    raise ValueError('This conversation has no finished plan to build.')
 
 
 def reported_checks(report):

@@ -150,7 +150,7 @@ print(json.dumps({'type':'result','structured_output':{'status':'observed','summ
                         process=start();self.wait_for(lambda:request('/api/state'))
                         self.assertEqual(state()['status'],'stopped')
                     self.assertEqual((workspace/'partial.txt').read_text(),'preserve')
-                    self.assertFalse(s.git(project,'status','--porcelain').strip())
+                    self.assertTrue((base/'data/baselines'/(ident+'.git')).is_dir())
                 finally:
                     for pid in pids:
                         if self.alive(pid):

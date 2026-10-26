@@ -13,7 +13,7 @@
  }
  function legacyFiles(run){
    const blocks=(run.diff||'').split(/(?=^diff --git )/m).filter(Boolean);
-   return (run.files||[]).map(path=>({path,status:'saved',content:blocks.find(block=>block.split('\n')[0].endsWith(' b/'+path))||'',notice:'Per-file previews were not captured for this older task. The original working copy contains the complete files.'}));
+   return (run.files||[]).map(path=>({path,status:'saved',content:blocks.find(block=>block.split('\n')[0].endsWith(' b/'+path))||'',notice:'Per-file previews were not captured for this older task. Your folder contains the complete files.'}));
  }
  function diffLines(file){
    let oldLine=0,newLine=0;
@@ -36,7 +36,7 @@
    const latest=reports.at(-1);
    const checks=(latest?.checks||[]).map(c=>({...c,round:latest.round}));
    const counts={passed:0,failed:0,not_run:0};checks.forEach(c=>counts[c.status]=(counts[c.status]||0)+1);
-   let html='<div class="change-review"><div class="review-overview"><div><span class="brief-label">Saved working copy</span><h3>'+files.length+' changed '+(files.length===1?'file':'files')+'</h3></div><p>Review the diff before keeping changes. Your original checkout is separate.</p></div>';
+   let html='<div class="change-review"><div class="review-overview"><div><span class="brief-label">Changes in your folder</span><h3>'+files.length+' changed '+(files.length===1?'file':'files')+'</h3></div><p>Review the diff before keeping changes. The changes are already in your folder.</p></div>';
    if(run.export_complete&&run.id)html+='<a class="export-patch" href="/api/export?run='+encodeURIComponent(run.id)+'" download>Download complete patch</a>';
    if(run.workspace)html+='<p class="review-location">'+esc(run.workspace)+'</p>';
    html+='<section class="reported-checks"><div class="checks-heading"><h4>Builder-reported checks · latest round</h4><span>Reported by the agent · not independently rerun by Relay</span></div>';
@@ -46,7 +46,7 @@
    }else html+='<p class="hint">No structured check results were reported. Review the Builder’s report below; a completed task does not establish that tests passed.</p>';
    html+=reports.map(r=>'<details class="builder-report"><summary>Builder report · round '+esc(r.round)+'</summary><div class="report-content">'+root.renderMarkdown(r.report)+'</div></details>').join('')+'</section>';
    if(files.length){
-     html+='<div class="file-review-layout"><nav class="changed-file-nav" aria-label="Changed files">'+files.map((f,i)=>'<button type="button" data-review-file="'+i+'"><span class="file-state '+esc(f.status)+'">'+esc(f.status.replace('_',' '))+'</span><span>'+esc(f.path)+'</span></button>').join('')+'</nav><div class="file-review-panels">';
+     html+='<div class="file-review-layout"><nav class="changed-file-nav" aria-label="Changed files">'+files.map((f,i)=>'<button type="button" data-review-file="'+i+'"><span class="file-state '+esc(f.status)+'">'+esc(f.status.replace('_',' '))+'</span><span class="file-nav-name" title="'+esc(f.path)+'">'+esc(f.path)+'</span></button>').join('')+'</nav><div class="file-review-panels">';
      html+=files.map((f,i)=>'<details class="file-review" data-review-panel="'+i+'" '+(i===0?'open':'')+'><summary><span class="file-state '+esc(f.status)+'">'+esc(f.status.replace('_',' '))+'</span><strong>'+esc(f.path)+'</strong><span class="diff-count"><b>+'+esc(f.additions??'—')+'</b> <em>−'+esc(f.deletions??'—')+'</em></span></summary>'+(f.notice?'<p class="preview-notice">'+esc(f.notice)+'</p>':'')+(f.content?'<div class="file-diff" tabindex="0" role="region" aria-label="Diff for '+esc(f.path)+'">'+diffLines(f)+'</div>':'<p class="hint file-empty">No text preview available.</p>')+'</details>').join('');
      html+='</div></div>';
    }else html+='<p class="hint">No file differences were captured for this task.</p>';

@@ -34,7 +34,7 @@
         const body=[];i++;
         while(i<lines.length&&!/^\s*```\s*$/.test(lines[i]))body.push(lines[i++]);
         if(i<lines.length)i++;
-        html+='<div class="report-code">'+(fence[1]?'<div class="code-language">'+escape(fence[1])+'</div>':'')+'<pre><code>'+escape(body.join('\n'))+'</code></pre></div>';continue;
+        html+='<div class="report-code"><div class="code-bar"><span class="code-language">'+(fence[1]?escape(fence[1]):'text')+'</span><button type="button" class="code-copy" data-copy-code>Copy</button></div><pre><code>'+escape(body.join('\n'))+'</code></pre></div>';continue;
       }
       const heading=line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
       if(heading){const level=Math.min(heading[1].length+1,6);html+='<h'+level+'>'+inline(heading[2])+'</h'+level+'>';i++;continue;}

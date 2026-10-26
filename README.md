@@ -85,6 +85,8 @@ Move the pointer to the notch and a small dark panel grows out of it, with icon 
 - **Deliver:** a shelf for files you need to move from one place to another, so you stop copying them by hand. **Drag files toward the notch** (from Finder, or from the Downloads stack): the panel opens by itself on Deliver, and you drop them on it. Later, open the panel (it comes back to the tab you used last), then **drag a row out** into the page, mail or folder where the file is needed, or press **Drag all** to carry every file in one move. To carry only some, **click** a file to select it, **⌘-click** to add or remove one, or **⇧-click** to select a range; dragging any selected file carries them all. Files are never copied: Deliver remembers only where they are (in `deliver.json` in Relay's data folder), so a file you moved or deleted shows greyed out as *missing*. Dropping a row in Finder behaves like dragging the file there yourself (it moves on the same disk, and ⌥ copies it). The **×** on a row takes it off the shelf without touching the file, and **Clear** empties the shelf. Files you moved with the drop (a move in Finder) leave the shelf by themselves. **Auto-clear** also takes copied files off the shelf once they are dropped somewhere (off by default; the choice is kept in `deliver-settings.json`). **Auto-catch** puts each new download from your `~/Downloads` folder on the shelf by itself (off by default). Relay looks at the folder every couple of seconds and takes a file once it has stopped changing, so a download that is still arriving (`.crdownload`, `.download`, `.part`) and hidden files are skipped; files already there when you switch it on, folders, and anything you took off the shelf are left alone, and files that arrive while Relay is closed are not caught. The first time, macOS may ask to let Relay open your Downloads folder; if you said no, the panel tells you where to allow it (System Settings › Privacy & Security › Files & Folders). **Zip** packs the files you picked (or all of them when none is picked, folders included) into one `.zip` that appears on the shelf, ready to drag out as a single file; the originals stay where they are, and the zip, which lives in Relay's data folder, is deleted when you take it off the shelf. The **sliders** button next to it folds out the shelf's options: **Auto-catch**, **Auto-clear**, and **Keep**, which takes items off the shelf by themselves once they have been there for 1 hour, 6 hours, 1 day or 1 week (click it to step through the choices; the files themselves are never deleted, only the shelf entry). The shelf holds up to 100 items.
 - **Notes:** quick notes and to-dos. Click the field, type, and press **Enter** to save a note, or **⌘ Enter** to save a to-do you can tick off. The panel stays open while you type, and Escape closes it. Notes are saved in `notes.json` in Relay's data folder.
 - **Motion:** while agents work, a soft light in the working agent's colour pours down from the notch, a bright thread runs under the tabs, and the Task tab and the room glow. While music plays, the light takes the colour of the cover, the cover breathes, an equalizer moves, and in the Office the agents put on headphones, nod to the beat and send up little notes. Even with the panel closed, the notch itself comes alive: a halo breathes around it and bright sparks run around its edge. While music plays it takes the cover's colour; while agents work it takes the working agent's colour, with three sparks (one per agent, the one with the baton longest). A new track or a new agent taking over sends a ripple of light out. It only appears on Macs with a notch, never takes mouse clicks, and agents take priority over music. Reduced-motion settings turn all of it off. The Music view also shows which app the sound comes from, with its icon.
+- **Office:** the full panel's room is larger (the panel grows to about 780 pixels wide) and redrawn in more detail. Its window follows your real time of day (sun, moon, stars, clouds, city lights), a wall clock shows the time, the picture becomes the music level meter while music plays, and a whiteboard fills with checks as the Reviewer works. Each agent has its own desk, monitor and props; the baton glows as work passes between them, and the door sign turns green, red or amber for finished, failed or needs-you. In **Auto mode** a neon AUTO sign flickers on the wall. If you are needed, the Observer walks to the door and calls you.
+- **Notifications:** the panel announces what happens with a small animated card that slides in under the notch: a task starting, a plan waiting for approval, a question for you, the plan being approved, a decision needed, a retry countdown, an Auto-mode decision, a failure, and a finished task with a burst of confetti. The panel edge also flashes in the matching colour, and the Task tab breathes while something needs you. The Office reacts too (sparks on a retry, confetti on approval). Reduced-motion settings replace the movement with a plain fade. The native panel size constants changed (`FullWidth` 780, `FullBodyHeight` 312), so rebuild the app to see the larger room.
 - **View → Open Notch Panel from Screen Top** turns the hover trigger off and on.
 - While it is on, closing the main window leaves Relay running so the panel keeps working; click the Dock icon to bring the window back, or press Command-Q to quit.
 - The panel is a page served by the local engine at `/notch`, so you can also open `http://127.0.0.1:48765/notch` in a browser.
@@ -142,7 +144,7 @@ The default team uses Claude as Observer and Reviewer, and Codex as Builder. You
 - **Clarify before approving.** The Observer asks focused questions when key requirements are missing. Your answers refine the plan and never authorize edits.
 - **Approve before building.** Review the proposed plan, risks, and verification checks before the Builder starts.
 - **Bring visual context.** Pick, drop, or paste screenshots and reference images into tasks and follow-ups.
-- **Continue the conversation.** Ask read-only follow-up questions in the same saved chat.
+- **Talk to your agent.** Keep chatting in the same saved chat: ask questions, or tell the agent to change things and it does it right away.
 - **Act on findings.** Select issues and turn them into an editable planning or implementation brief with evidence attached.
 - **Review the result.** Read an overview, priority labels, next actions, file-by-file diffs, new-file previews, and Builder-reported checks.
 - **Recover saved work.** Retry a failed step or explicitly continue interrupted work in the same working copy, preserving completed results and approval records.
@@ -174,7 +176,7 @@ Relay opens with no conversation selected. Saved chats stay in the sidebar until
 
 Read-only modes inspect your selected folder directly. They can see staged, unstaged, and untracked files without requiring a commit or stash, and they do not treat those existing edits as changes made by an agent.
 
-Build tasks create a separate detached Git worktree from committed `HEAD`, so your original checkout's source files stay unchanged. Untracked and ignored files, local dependencies, and uncommitted edits are not copied; submodules are not initialized automatically.
+Build tasks edit your project folder directly; Git is not required. Just before the Builder starts, Relay records a baseline of the folder's files in a private store inside Relay's data folder, never inside your project. The Changes tab, the complete patch and the Reviewer all compare against that baseline, so uncommitted work you already had is not counted as the Builder's change. The folder's own `.gitignore` is respected. Caches (`node_modules`, `.venv`, `__pycache__`), nested Git repositories, files over 5 MB and top-level folders over 50 MB are left out of the baseline, so changes there are not shown. The Builder is still told not to commit or change Git history.
 
 ## Working with Relay
 
@@ -185,7 +187,7 @@ For **Plan only** and **Build & review**, the Observer can ask up to five focuse
 
 Answer every question and choose **Send answers & update plan**. Relay sends the answers to the read-only Observer, which revises the plan or asks remaining questions. The task timer pauses while waiting for answers. Stop remains available.
 
-**Sending answers never approves edits.** A build still stops at **Awaiting your approval** with the final revised plan. Plan-only tasks finish with a read-only report. Observe-only tasks and report follow-ups keep their existing read-only report behavior.
+**Sending answers never approves edits.** A build still stops at **Awaiting your approval** with the final revised plan. Plan-only tasks finish with a read-only report. Observe-only tasks keep their read-only report behavior; chat messages in a finished chat are different and act immediately.
 
 Questions and submitted answers stay in the chat under **Your clarification answers**, are preserved in follow-ups, and are included in the Builder and Reviewer handoffs. Unsent text is saved in the browser tab's session storage, so you can reload and reopen the waiting chat. A server restart interrupts the task; it does not resume questions or approve work automatically.
 
@@ -198,7 +200,9 @@ Every real build task waits at **Awaiting your approval** after observation and 
 
 The task's time limit pauses while waiting for this decision, and refreshing preserves the pending plan. Graceful shutdown stops the task and saves its changes. After a crash or forced termination, restart marks unfinished tasks interrupted. Neither path approves or resumes work automatically.
 
-Read-only tasks and follow-ups do not start a Builder and do not require this approval gate.
+Read-only tasks do not start a Builder and do not require this approval gate. A chat message is different: it goes straight to the Builder and acts immediately.
+
+**Auto mode.** Tick **Auto mode** when you start a Plan-only or Build & review task to let the agents work until it is done while you are away. The Observer is told not to ask questions and to state its assumptions in the plan; the plan approves itself (the Approve step shows "Auto mode approved the plan"); and the Builder and Reviewer keep going until the Reviewer approves. When the Reviewer reports the same findings three rounds in a row, or a review-round limit you set is reached, an agent makes the decision instead of asking you: it either gives the Builder a different approach to try (at a round limit it grants itself two more rounds) or accepts what is there and finishes. It changes approach at most twice per task; after that it finishes and lists what is left under **Open items Auto mode accepted**, the status reads **Finished with open items**, and the findings stay in the Review findings tab. A time limit you set is still a hard stop. If an agent fails (a dropped connection, a usage limit, an invalid answer), Auto mode retries that step up to two more times, waiting 30 seconds and then 2 minutes, and tells the Builder to continue from the files as they are. The timeline shows each retry. When an Auto task finishes, needs your decision, or stops with an error, Relay also shows a macOS notification with a sound; pressing **Stop** yourself does not notify. The notification comes from macOS Script Editor, so if you never see one, allow notifications for Script Editor in System Settings → Notifications, or set `RELAY_NO_NOTIFY=1` to turn them off. Auto mode never pushes or commits in the Build flow (the Builder rule is unchanged), and **Stop** always works. The choice is remembered for your next task.
 
 </details>
 
@@ -243,7 +247,9 @@ New structured reports include:
 
 Older reports remain readable. Missing priority ratings are labeled **Unrated** rather than generated afterward.
 
-**Ask a follow-up.** Use **Continue this conversation** below a completed real report. Relay sends the prior questions and reports as context and runs the configured Observer with editing disabled. Answers stay in the same chat, with earlier reports and build changes preserved. Each answer uses a fresh CLI invocation; this is not a resumed desktop-app session. Very long conversations are rejected with a request for a focused new task instead of silently dropping context.
+**Talk to your agent.** Use **Talk to your agent** below a finished real chat. Each message goes to your configured **Builder** model as a conversation turn, with the earlier questions, reports and decisions as context. It answers questions without changing anything, and when you ask it to change, build, fix, run, commit or push something it does it immediately with its editing and command tools, with no plan or approval step and no Reviewer. Just before it starts, Relay records a baseline of the folder, so anything it changes appears in **Changes**; a message that changes nothing leaves earlier changes and their patch alone. Codex-based agents are also given network access in chat so a push you ask for can work. Relay does not manage credentials, and the agent is told to commit or push only when you explicitly ask in that message. Answers stay in the same chat, with earlier reports and build changes preserved. Each answer uses a fresh CLI invocation; this is not a resumed desktop-app session. Very long conversations are rejected with a request for a focused new task instead of silently dropping context.
+
+**Build this plan.** After a Plan-only report, **Build this plan** runs the full Build & review pipeline in the same chat (choosing it is the plan approval, so no second planning pass runs, and the Reviewer checks the result). The plan that gets built is the latest plan plus every question and answer from the chat after it, listed under **Changes and decisions agreed in the conversation after this plan**; those take precedence where they conflict. The Approve step shows exactly that text. The Review findings buttons prefill the chat box instead of starting a new chat. Each build keeps its own patch; earlier patches are saved next to the latest as `changes-before-turn-N.patch`.
 
 **Turn findings into a task.** Open **Review findings**, select the issues to address, then choose **Plan selected** or **Build & review selected**. Relay opens an editable draft with the original project, team, selected evidence, and image references. Review it before pressing Start. A build still requires a clean repository and waits for plan approval. Changing the project or choosing **Clear** removes the attached finding context.
 
@@ -264,16 +270,16 @@ The **Changes** tab provides:
 
 Previews are bounded and show notices for truncation, binary files, and unavailable content. Older tasks without saved per-file previews use their existing patch where possible; their new-file bodies may be unavailable. New build snapshots save a complete `changes.patch`, including added, modified, deleted, and binary files, symlinks, and executable permissions. Ignored files are excluded. Generating the patch does not change the working copy's Git staging area. Older patches may omit new files and are not offered as complete downloads.
 
-**To keep the changes**, once the task finishes choose **Download complete patch** in **Changes**. In a clean checkout of the same starting commit, run:
+**The changes are already in your folder.** To copy them elsewhere, choose **Download complete patch** in **Changes** and, in a checkout that matches the folder as it was before the build, run:
 
 ```sh
 git apply --check /path/to/relay-<chat-id>.patch
 git apply /path/to/relay-<chat-id>.patch
 ```
 
-Then rerun your checks. This also preserves new files. You can instead open the displayed working copy, inspect the changes, create a branch there, and commit through your normal Git workflow.
+Then rerun your checks. If the folder is a Git repository, review the changes with `git diff` and commit them through your normal Git workflow.
 
-**Relay does not automatically merge, commit, or push the result.** Keep any worktrees you still need; remove them using Git's worktree tools when appropriate.
+**Relay does not automatically merge, commit, or push the result.** Each build keeps its baseline under `baselines/` in Relay's data folder until you delete it.
 
 </details>
 
@@ -288,11 +294,11 @@ For tasks created with checkpoint support, a **Recover this task** or **Continue
 - **Continue questions** preserves the pending question batch and previous answers; answers still do not authorize edits.
 - **Retry observation / plan update** repeats only the failed read-only stage.
 
-Relay checks that the task folder and working copy still exist and that a build's original commit and repository identity are unchanged. It does not reset, recreate, merge, or commit the working copy. A saved completed review can be reused only if its source fingerprint still matches; changed files require another review.
+Relay checks that the task folder and your project folder still exist and that the saved baseline is intact. It does not reset, recreate, merge, or commit the working copy. A saved completed review can be reused only if its source fingerprint still matches; changed files require another review.
 
 Each recovery attempt gets a fresh time budget using the task's configured limit. The original review-round cap remains in force. Only one task can run, and a recovery cannot start while a previous worker is finishing its saves. **Recovery history** keeps previous errors and attempt outcomes. Provider prompts and results from retries have distinct attempt filenames.
 
-Recovery is always explicit. Restart never starts agents or approves a plan on its own. A rejected plan cannot be resumed, and reaching the review-round limit does not grant more rounds. Older tasks and setup failures without a checkpoint need a new task; their working copies remain available for manual inspection.
+Recovery is always explicit. Restart never starts agents or approves a plan on its own. A rejected plan cannot be resumed. Reaching the review-round limit never grants more rounds by itself: the chat shows **Needs your decision**, lists the open findings, and lets you either review the changes (already in your folder) or choose **Fix the remaining findings** with a number of extra rounds you pick. Older tasks and setup failures without a checkpoint need a new task; their working copies remain available for manual inspection.
 
 A checkpoint records results only after Relay receives them. If a process crashes before a result is saved, that unsaved step may need to run again. Existing files remain available; recovery is a fresh CLI invocation with saved context, not a restored provider session.
 
@@ -316,7 +322,7 @@ Search saved conversations in the sidebar. On smaller screens, use **History** t
 
 **Delete and restore a chat.** Open a chat's **…** menu and choose **Delete chat**, or use that button in a finished chat's activity panel. Running tasks must be stopped first.
 
-Relay moves the chat, its attachments, prompts, and logs into local Trash. The original project and task worktree remain intact. **Undo** restores the deleted chat while its notification is visible (ten seconds, paused while hovered or focused); successful restoration feedback disappears after four seconds, and errors remain until dismissed or replaced. This does not erase the CLIs' own histories or permanently remove local data.
+Relay moves the chat, its attachments, prompts, and logs into local Trash. Your project and its baseline remain intact. **Undo** restores the deleted chat while its notification is visible (ten seconds, paused while hovered or focused); successful restoration feedback disappears after four seconds, and errors remain until dismissed or replaced. This does not erase the CLIs' own histories or permanently remove local data.
 
 To restore an older chat manually, quit Relay, move its folder from `trash/<chat-id>/` back to `runs/<chat-id>/` inside the data folder (see [Where your data lives](#where-your-data-lives)), and reopen Relay.
 
@@ -344,7 +350,7 @@ Set `RELAY_DATA_DIR` to use a different folder. Only one Relay may use a data fo
 | `runs/<chat-id>/*.prompt.txt` | Agent instructions and handoffs |
 | `runs/<chat-id>/builder-*.txt` | Builder implementation reports |
 | `runs/<chat-id>/changes.patch` | Complete patch of the build's changes |
-| `workspaces/<task-id>/` | Separate build worktrees |
+| `baselines/<task-id>.git/` | Private pre-build baselines of edited folders (older tasks used `workspaces/`) |
 | `trash/<chat-id>/` | Recoverable deleted conversations |
 
 Relay's combined history is local. The installed tools may save their own sessions, but Relay does not sync a combined conversation into the Claude or Codex desktop apps.
@@ -461,7 +467,7 @@ See [Architecture](docs/ARCHITECTURE.md) for implementation details and [Contrib
 | Agent needs sign-in | Run the relevant login command in Terminal, then choose **Refresh connections**. |
 | Relay cannot find `claude` or `codex` | Set `RELAY_CLAUDE` or `RELAY_CODEX` to the absolute path. When launching the packaged app from Finder, make sure the CLI is installed in a standard location. |
 | Requested model fails | Check the installed CLI's supported models, configuration, and account access; try **Tool default**. |
-| Build rejects a project | Select the repository root and commit or stash pending changes. Read-only modes do not require this. |
+| Changes tab is missing a file | The baseline leaves out caches, nested Git repositories, files over 5 MB and top-level folders over 50 MB, so changes there are not listed. Check the event log for the excluded items. |
 | Codex cannot start inside another agent's sandbox | Launch Relay yourself from Terminal, `Start.command`, or the app. |
 | Relay is already running | Use the existing instance or quit it. Changing ports does not bypass the data-folder lock. |
 | Port is occupied (source mode) | Choose another port with `--port 8766`. |

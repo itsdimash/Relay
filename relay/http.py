@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/queue/start':
                 return self.respond(self.app.start_queued_task(payload.get('id')), 201)
             if path == '/api/recover':
-                return self.respond(self.app.recover_run(payload.get('id'), payload.get('checkpoint_id')), 201)
+                return self.respond(self.app.recover_run(payload.get('id'), payload.get('checkpoint_id'), payload.get('minutes'), payload.get('rounds')), 201)
             if path == '/api/teams/save':
                 return self.respond(self.app.save_team_preset(payload.get('team'), payload.get('id')), 201)
             if path == '/api/history/delete':
@@ -210,7 +210,7 @@ class Handler(BaseHTTPRequestHandler):
                     project = Path(previous.get('workspace') or previous['project'])
                 if not demo and ((path != '/api/followup' and not str(payload.get('project', '')).strip()) or not project.is_dir()):
                     raise ValueError('Choose an existing project folder.')
-                rounds, minutes = payload.get('rounds', 3), payload.get('minutes', 20)
+                rounds, minutes = payload.get('rounds', 0), payload.get('minutes', 0)
                 if type(rounds) is not int or type(minutes) is not int or not 0 <= rounds <= 5 or not 0 <= minutes <= 120:
                     raise ValueError('Choose 1–5 review rounds and 1–120 minutes, or Without limit (0).')
                 with self.app.LOCK:
@@ -220,15 +220,27 @@ class Handler(BaseHTTPRequestHandler):
                     if source and demo:
                         raise ValueError('Report actions require a real task.')
                     conversation = source if path == '/api/followup' else None
-                    context = self.app.report_context(source, None if conversation else payload.get('finding_indexes')) if source else ''
-                    if source and not conversation and payload.get('finding_indexes') is None:
+                    build_plan = payload.get('build_plan') is True
+                    if build_plan and not source:
+                        raise ValueError('Choose a saved plan to build.')
+                    pre_plan = self.app.plan_from_conversation(source) if build_plan else None
+                    context = self.app.report_context(source, None if conversation or build_plan else payload.get('finding_indexes')) if source else ''
+                    if source and not conversation and not build_plan and payload.get('finding_indexes') is None:
                         raise ValueError('Select findings to carry into the new task.')
-                    mode = 'observe' if conversation else payload.get('mode', 'build')
+                    if conversation:
+                        action = 'build' if build_plan else payload.get('mode', 'chat')
+                        if action not in ('chat', 'plan', 'build'):
+                            raise ValueError('Choose Ask a question, Plan changes, or Make changes.')
+                        chat = action == 'chat'
+                        mode = 'observe' if chat else action
+                    else:
+                        chat = False
+                        mode = 'build' if build_plan else payload.get('mode', 'build')
                     if conversation:
                         project = Path(source.get('workspace') or source['project'])
                         team = source.get('team')
                     else:
-                        team = payload.get('team')
+                        team = source.get('team') if build_plan else payload.get('team')
                         if source:
                             expected = Path(source.get('original_project', source['project'])).expanduser().resolve()
                             if project.resolve() != expected:
@@ -242,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('Keep the task under 10,000 characters.')
                     if self.app.SHUTTING_DOWN.is_set():
                         raise ValueError('Relay is shutting down. Restart it before starting a task.')
-                    run = self.app.Run(task or 'Example: improve email validation', project, rounds, minutes, demo, team, mode, context=context, conversation=conversation, source={'id': source['id'], 'finding_indexes': payload.get('finding_indexes')} if source and not conversation else None, attachments=images)
+                    run = self.app.Run(task or 'Example: improve email validation', project, rounds, minutes, demo, team, mode, context=context, conversation=conversation, source={'id': source['id'], 'finding_indexes': payload.get('finding_indexes')} if source and not conversation else None, attachments=images, chat=chat, pre_plan=pre_plan, auto=payload.get('auto') is True)
                     self.app.RUNS[run.id] = run
                     self.app.ACTIVE = run
                     threading.Thread(target=run.execute, daemon=True).start()

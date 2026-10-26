@@ -17,11 +17,12 @@ export function createTasks({
   function updateTaskMode() {
     const mode = $('taskMode').value,
       build = mode === 'build';
-    $('projectHint').textContent = build ? 'Save a name and folder once, then select it for future tasks. Work happens in a separate copy of a clean Git repository.' : 'The Observer reads your selected folder as it is, including uncommitted files. No Git repository or clean working tree is required.';
+    $('projectHint').textContent = build ? 'Save a name and folder once, then select it for future tasks. Any folder works; Git is not required. The Builder edits your files directly, and Relay keeps a baseline so you can review every change.' : 'The Observer reads your selected folder as it is, including uncommitted files. No Git repository or clean working tree is required.';
     $('task').placeholder = build ? 'Describe the change and what a successful result looks like…' : mode === 'plan' ? 'Describe what you want to achieve and ask for a plan…' : 'What should the Observer inspect or explain?…';
     $('taskModeHint').textContent = build ? 'Observer → Questions if needed → Your approval → Builder → Reviewer. Review the plan before editing begins.' : mode === 'plan' ? 'The Observer prepares a plan. Editing tools are disabled; no builder or reviewer runs.' : 'The Observer inspects the project and reports findings. Editing tools are disabled; no builder or reviewer runs.';
     document.querySelector('.agents').classList.toggle('single-role', !build);
     $('roundsSetting').hidden = !build;
+    $('autoSetting').hidden = mode === 'observe';
     $('rounds').disabled = !build;
     $('start').innerHTML = (build ? 'Start collaboration' : mode === 'plan' ? 'Create a plan' : 'Start observation') + ' <span aria-hidden="true">→</span>';
     $('workflowSteps').innerHTML = (build ? [['Understand', 'The Observer explores the project, asks for missing details, and defines what to check.'], ['Approve & build', 'Review the proposed plan. The builder starts only after you approve.'], ['Review & refine', 'The reviewer gives evidence. The builder fixes issues or explains its decisions.']] : [['Inspect', 'The observer reads the project with editing tools disabled.'], [mode === 'plan' ? 'Plan' : 'Report', mode === 'plan' ? 'Receive proposed steps, affected files, risks, and verification criteria.' : 'Receive findings and explanations supported by the source.']]).map(([title, description], i) => `<li><span class="step-number">${i + 1}</span><div><strong>${title}</strong><p>${description}</p></div></li>`).join('');
@@ -84,6 +85,7 @@ export function createTasks({
         team: appState.currentTeam,
         rounds: Number($('rounds').value),
         minutes: Number($('minutes').value),
+        auto: $('autoMode').checked && $('taskMode').value !== 'observe',
         demo
       });
       if (!demo) clearImageDraft('task');
@@ -106,6 +108,8 @@ export function createTasks({
     }
   }
   function init() {
+    try { $('autoMode').checked = localStorage.getItem('relay.auto') === '1'; } catch (_) {}
+    $('autoMode').addEventListener('change', () => { try { localStorage.setItem('relay.auto', $('autoMode').checked ? '1' : '0'); } catch (_) {} });
     $('taskMode').addEventListener('change', updateTaskMode);
     $('taskForm').addEventListener('submit', event => {
       event.preventDefault();
@@ -147,6 +151,35 @@ export function createTasks({
         tabs[index].focus();
       });
     }
+    $('feed').addEventListener('click', async event => {
+      if (!event.target.closest('#buildPlan')) return;
+      const run = appState.runs.find(r => r.id === appState.selected);
+      if (!run || appState.loading || activeRun()) return;
+      appState.loading = true;
+      updateButtons();
+      appState.buildError = null;
+      try {
+        const result = await request('/api/followup', {
+          source_id: run.id,
+          build_plan: true,
+          task: 'Build the plan',
+          rounds: Number($('rounds').value),
+          minutes: Number($('minutes').value),
+          images: []
+        });
+        appState.selected = result.id;
+        appState.rendered = '';
+        const state = await request('/api/state');
+        appState.runs = state.runs;
+        render();
+      } catch (error) {
+        appState.buildError = { id: run.id, message: error.message };
+      } finally {
+        appState.loading = false;
+        appState.rendered = '';
+        render();
+      }
+    });
     $('followupForm').addEventListener('submit', async event => {
       event.preventDefault();
       if (appState.loading || appState.imageLoading || activeRun()) return;
@@ -162,6 +195,7 @@ export function createTasks({
           source_id: run.id,
           task: question,
           images: imagePayload('followup'),
+          rounds: Number($('rounds').value),
           minutes: Number($('minutes').value)
         });
         appState.selected = result.id;

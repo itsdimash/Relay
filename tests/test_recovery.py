@@ -1,6 +1,7 @@
 """Recovery preserves approved work and never infers permission to edit."""
 import json
 from pathlib import Path
+import shutil
 import threading
 import time
 import unittest
@@ -16,7 +17,7 @@ class RecoveryTests(unittest.TestCase):
         self.registry=patch.object(s,'RUNS',{});self.registry.start()
         self.active=patch.object(s,'ACTIVE',None);self.active.start()
         self.calls=[];self.fail_review=True;self.fail_builder=False;self.fail_observer=False
-        self.stop_after_review=False;self.revisions=False;self.ask=False
+        self.stop_after_review=False;self.revisions=False;self.ask=False;self.revise_first=False
         self.tasks=[];self.workers=[]
         def claude(run,prompt):
             self.calls.append((run.current_role,prompt))
@@ -30,7 +31,7 @@ class RecoveryTests(unittest.TestCase):
             if self.fail_review:
                 self.fail_review=False;raise RuntimeError('Reviewer connection lost')
             if self.stop_after_review and count==1:run.stop_event.set()
-            return fixtures.review('needs_changes' if self.revisions and count==2 else 'approved')
+            return fixtures.review('needs_changes' if (self.revisions and count==2) or (self.revise_first and count==1) else 'approved')
         def codex(run,prompt):
             self.calls.append(('builder',prompt))
             workspace=Path(run.info['workspace'])
@@ -85,7 +86,38 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(recovered.info['recovery_attempts'][0]['previous_summary'],'Reviewer connection lost')
         self.assertEqual(recovered.info['recovery_attempts'][0]['status'],'done')
         self.assertIn('new.txt',(recovered.folder/'changes.patch').read_text())
-        self.assertFalse(s.git(self.project,'status','--porcelain').strip())
+        self.assertTrue((self.project/'new.txt').exists())
+
+    def test_a_recovery_attempt_can_choose_its_own_time_limit(self):
+        run=self.new_task();self.assertEqual(run.info['minutes'],1)
+        ident=run.info['workflow']['id']
+        for bad in (-1,500,'10',True):
+            with self.assertRaises(ValueError):s.recover_run(run.id,ident,bad)
+        self.assertIs(s.RUNS[run.id],run)
+        recovered=s.RUNS[s.recover_run(run.id,ident,0)['id']];self.tasks.append(recovered)
+        self.assertTrue(recovered.finished.wait(7))
+        self.assertEqual(recovered.info['minutes'],0)
+        self.assertIsNone(recovered.deadline)
+
+    def test_review_limit_offers_more_rounds_and_continues_from_the_saved_findings(self):
+        self.fail_review=False;self.revise_first=True
+        run=s.Run('Implement the approved task',self.project,rounds=1,minutes=0)
+        self.tasks.append(run);s.RUNS[run.id]=run;s.ACTIVE=run;run.execute()
+        self.assertEqual(run.info['status'],'needs_attention')
+        self.assertEqual(run.info['workflow']['step'],'limit')
+        option=s.recovery_option(run.info)
+        self.assertTrue(option['available']);self.assertEqual(option['label'],'Fix the remaining findings')
+        ident=run.info['workflow']['id'];builders=self.counts()['builder']
+        for bad in (None,-1,6,'2'):
+            with self.assertRaises(ValueError):s.recover_run(run.id,ident,None,bad)
+        recovered=s.RUNS[s.recover_run(run.id,ident,None,2)['id']];self.tasks.append(recovered)
+        self.assertTrue(recovered.finished.wait(7))
+        self.assertEqual(recovered.info['max_rounds'],3)
+        self.assertEqual(recovered.info['round'],2)
+        self.assertEqual(self.counts()['builder'],builders+1)
+        self.assertEqual(recovered.info['recovery_attempts'][0]['from_step'],'limit')
+        self.assertIn('Trim first',next(p for role,p in reversed(self.calls) if role=='builder'))
+        self.assertIn(recovered.info['status'],('done','needs_attention'))
 
     def test_retry_review_can_request_a_new_fix_round(self):
         self.revisions=True
@@ -163,15 +195,16 @@ class RecoveryTests(unittest.TestCase):
         recovered=self.recover(run);self.assertEqual(recovered.info['status'],'done')
         self.assertEqual(self.counts(),dict(observer=1,builder=1,reviewer=1))
 
-    def test_missing_or_changed_worktree_is_rejected_without_replacing_task(self):
+    def test_missing_folder_or_baseline_is_rejected_without_replacing_task(self):
         run=self.new_task();workspace=Path(run.info['workspace']);ident=run.info['workflow']['id']
         moved=workspace.with_name(workspace.name+'-moved');workspace.rename(moved)
         with self.assertRaisesRegex(ValueError,'missing'):s.recover_run(run.id,ident)
         self.assertIs(s.RUNS[run.id],run);moved.rename(workspace)
+        # Committing your own work in the folder does not affect recovery; losing the baseline does.
         s.git(workspace,'add','.');s.git(workspace,'commit','-qm','User committed preserved work')
-        changed_head=s.git(workspace,'rev-parse','HEAD')
-        with self.assertRaisesRegex(ValueError,'commit or repository changed'):s.recover_run(run.id,ident)
-        self.assertEqual(s.git(workspace,'rev-parse','HEAD'),changed_head)
+        baseline=Path(run.info['workflow']['baseline']);backup=baseline.with_name('backup.git');baseline.rename(backup)
+        with self.assertRaisesRegex(ValueError,'baseline'):s.recover_run(run.id,ident)
+        self.assertIs(s.RUNS[run.id],run)
 
     def test_stale_duplicate_and_active_recovery_requests_are_rejected(self):
         run=self.new_task();ident=run.info['workflow']['id']
@@ -210,7 +243,9 @@ class RecoveryTests(unittest.TestCase):
         recovered=self.recover(run)
         self.assertEqual(recovered.info['status'],'needs_attention')
         self.assertEqual(self.counts(),dict(observer=1,builder=1,reviewer=2))
-        self.assertIsNone(s.recovery_option(recovered.info))
+        self.assertEqual(recovered.info['max_rounds'],1)
+        # More rounds are only ever added by the user's explicit choice at the limit.
+        self.assertEqual(s.recovery_option(recovered.info)['step'],'limit')
 
     def test_legacy_tasks_are_not_given_guessed_checkpoints(self):
         run=self.new_task();run.info.pop('workflow')

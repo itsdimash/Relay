@@ -87,7 +87,7 @@ def validate_team(team):
     return result
 
 
-def provider_command(provider, role, profile, workspace, output, schema_file, images=()):
+def provider_command(provider, role, profile, workspace, output, schema_file, images=(), structured=True, network=False):
     """Provider adapter boundary: role capabilities are set here, never by free text."""
     builder = role == 'builder'
     if provider == 'claude':
@@ -96,13 +96,15 @@ def provider_command(provider, role, profile, workspace, output, schema_file, im
                 '--restricted', '--tools', tools, '--allowedTools', tools,
                 '--permission-mode', 'dontAsk', '--strict-mcp-config',
                 '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '']
-        if not builder:
+        if not builder and structured:
             args += ['--json-schema', json.dumps(SCHEMA)]
     elif provider == 'codex':
         args = [executable('codex'), 'exec', '--json', '--sandbox', 'workspace-write' if builder else 'read-only',
                 '--skip-git-repo-check', '-C', str(workspace), '-o', str(output)]
-        if not builder:
+        if not builder and structured:
             args += ['--output-schema', str(schema_file)]
+        if network:
+            args += ['-c', 'sandbox_workspace_write.network_access=true']
     else:
         raise ValueError('Unsupported provider.')
     if profile['model']:
@@ -155,11 +157,20 @@ class ProviderCalls:
         self.emit(provider, 'review', result['summary'], review=result)
         return result
 
+    def chat_reply(self, text, saved=''):
+        """A chat reply is plain text: the agent's final message, not a structured report."""
+        reply = (saved or getattr(self, 'final_message', '') or text or '').strip()
+        self.final_message = ''
+        if not reply:
+            raise RuntimeError('The agent returned no reply. Try asking again.')
+        return reply
+
     def claude(self, prompt):
         role = self.current_role or 'reviewer'
+        chat = bool(self.info.get('chat'))
         profile = self.info['team']['roles'][role]
         images = [self.app.saved_image_path(self.info,image['id']) for image in self.info.get('attachments',[])]
-        args = self.app.provider_command('claude', role, profile, self.info['workspace'], '', '', images)
+        args = self.app.provider_command('claude', role, profile, self.info['workspace'], '', '', images, structured=not chat)
         if images:
             content = [{'type':'text','text':prompt}]
             content += [{'type':'image','source':{'type':'base64','media_type':image['mime'],'data':base64.b64encode(path.read_bytes()).decode('ascii')}} for image,path in zip(self.info['attachments'],images)]
@@ -167,6 +178,8 @@ class ProviderCalls:
             result, text = self.launch('Claude', args, prompt, input_data=message)
         else:
             result, text = self.launch('Claude', args, prompt)
+        if chat:
+            return self.chat_reply(text)
         if role != 'builder':
             return self.parse_review(result, text, 'Claude')
         if not text.strip():
@@ -179,10 +192,13 @@ class ProviderCalls:
         profile = self.info['team']['roles'][role]
         output = self.folder / (f'builder-{self.info["round"]}{self.attempt_suffix()}.txt' if role == 'builder' else f'{role}-{self.info["round"]}-turn-{len(self.info.get("turns", []))}-observation-{self.info.get("observation_round", 0)}{self.attempt_suffix()}.json')
         schema_file = self.folder / 'review-schema.json'
-        if role != 'builder':
+        chat = bool(self.info.get('chat'))
+        if role != 'builder' and not chat:
             schema_file.write_text(json.dumps(SCHEMA))
-        args = self.app.provider_command('codex', role, profile, self.info['workspace'], output, schema_file, [self.app.saved_image_path(self.info,image['id']) for image in self.info.get('attachments',[])])
+        args = self.app.provider_command('codex', role, profile, self.info['workspace'], output, schema_file, [self.app.saved_image_path(self.info,image['id']) for image in self.info.get('attachments',[])], structured=not chat, network=chat)
         _, text = self.launch('Codex', args, prompt)
+        if chat:
+            return self.chat_reply(text, output.read_text() if output.exists() else '')
         if role != 'builder':
             # Codex's final schema-constrained message is distinct from progress messages.
             if not output.exists():
