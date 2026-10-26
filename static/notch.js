@@ -3,6 +3,7 @@ import { createRoom } from './js/notch-room.js';
 import { limitRow } from './js/limits.js';
 import { createCollaboration } from './js/notch-collaboration.js';
 import { createActivity } from './js/notch-activity.js';
+import { createMusicFx, STYLES, DEFAULT_STYLE, isStyle } from './js/notch-music-fx.js';
 
 const $ = id => document.getElementById(id);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -21,6 +22,171 @@ const openRun = destination => {
 };
 const collaboration = createCollaboration({ reducedMotion, openRun });
 const activity = createActivity({post, openRun});
+
+// Music animation (drawn by js/notch-music-fx.js): behind the Music view, beside its title, and in the track-change pill.
+// "Customize" (or the animation next to the title) opens a small picker with two tabs: the animation in the panel, and, in
+// the app, the light around the notch on the screen, which the app itself draws and remembers.
+const fx = createMusicFx({ reducedMotion });
+const rectOf = (canvas, element, radius) => () => {
+  const area = canvas.getBoundingClientRect();
+  const box = element.getBoundingClientRect();
+  return box.width ? { x: box.left - area.left, y: box.top - area.top, w: box.width, h: box.height, r: radius } : null;
+};
+fx.attach($('musicFx'), { kind: 'stage', anchor: rectOf($('musicFx'), document.querySelector('#music .cover'), 14) });
+fx.attach($('musicMini'), { kind: 'mini' });
+fx.attach($('pillFx'), { kind: 'pill' });
+let fxStyle = DEFAULT_STYLE;
+try {
+  const saved = localStorage.getItem('relay.musicFx');
+  if (isStyle(saved)) fxStyle = saved;
+} catch (_) {}
+fx.setStyle(fxStyle);
+$('panel').dataset.fx = fxStyle;
+
+const GLOWS = [{ id: 'off', name: 'Off' }, { id: 'line', name: 'Line' }, { id: 'halo', name: 'Halo' }, { id: 'sparks', name: 'Sparks' }];
+let glowStyle = 'line'; // the app keeps the real choice and tells us through relayGlowStyle
+let fxTab = 'panel';
+const fxTiles = { panel: new Map(), screen: new Map() };
+
+function offPreview() {
+  const preview = document.createElement('span');
+  preview.className = 'fx-none';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M6 10h8');
+  svg.append(path);
+  preview.append(svg);
+  return preview;
+}
+
+function addTile(group, grid, id, name, preview, choose) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'fx-tile';
+  tile.setAttribute('role', 'radio');
+  const label = document.createElement('span');
+  label.textContent = name;
+  tile.append(preview, label);
+  tile.addEventListener('click', choose);
+  $(grid).append(tile);
+  fxTiles[group].set(id, tile);
+}
+
+function previewCanvas(style) {
+  const canvas = document.createElement('canvas');
+  canvas.setAttribute('aria-hidden', 'true');
+  fx.attach(canvas, { kind: 'tile', style });
+  return canvas;
+}
+
+for (const { id, name } of STYLES) addTile('panel', 'fxGridPanel', id, name, id === 'off' ? offPreview() : previewCanvas(id), () => chooseFx(id));
+for (const { id, name } of GLOWS) addTile('screen', 'fxGridScreen', id, name, id === 'off' ? offPreview() : previewCanvas(`glow-${id}`), () => chooseGlow(id));
+$('fxTabs').hidden = !native; // the light on the screen belongs to the app: nothing to choose in a normal browser
+
+function paintFxChoice() {
+  for (const [group, chosen] of [['panel', fxStyle], ['screen', glowStyle]]) {
+    for (const [id, tile] of fxTiles[group]) {
+      tile.setAttribute('aria-checked', String(id === chosen));
+      tile.tabIndex = id === chosen ? 0 : -1;
+    }
+  }
+  $('panel').dataset.fx = fxStyle;
+}
+
+function setFxTab(name) {
+  fxTab = name === 'screen' && native ? 'screen' : 'panel';
+  for (const [tab, grid, key] of [['fxTabPanel', 'fxGridPanel', 'panel'], ['fxTabScreen', 'fxGridScreen', 'screen']]) {
+    $(tab).setAttribute('aria-selected', String(fxTab === key));
+    $(tab).tabIndex = fxTab === key ? 0 : -1;
+    $(grid).hidden = fxTab !== key;
+  }
+  fx.refresh(); // the previews that just appeared start moving
+}
+
+function setFxPicker(open) {
+  const picker = $('fxPicker');
+  if (open === !picker.hidden) return;
+  picker.hidden = !open;
+  for (const id of ['fxOpen', 'fxCustomize']) $(id).setAttribute('aria-expanded', String(open));
+  fx.setPicker(open);
+  if (open) {
+    setFxTab(fxTab);
+    const tiles = fxTiles[fxTab];
+    tiles.get(fxTab === 'panel' ? fxStyle : glowStyle)?.focus({ preventScroll: true });
+  }
+}
+
+function closeSoon() {
+  setTimeout(() => {
+    if ($('fxPicker').contains(document.activeElement)) fxOpener.focus({ preventScroll: true });
+    setFxPicker(false);
+  }, 240);
+}
+
+function chooseFx(id) {
+  fxStyle = id;
+  try {
+    localStorage.setItem('relay.musicFx', id);
+  } catch (_) {}
+  fx.setStyle(id);
+  paintFxChoice();
+  closeSoon();
+}
+
+function chooseGlow(id) {
+  glowStyle = id;
+  paintFxChoice();
+  tell({ type: 'glowStyle', style: id });
+  closeSoon();
+}
+
+// The app tells us which glow is saved, when the page loads and whenever it changes.
+window.relayGlowStyle = style => {
+  if (!GLOWS.some(glow => glow.id === style)) return;
+  glowStyle = style;
+  paintFxChoice();
+};
+
+paintFxChoice();
+setFxTab('panel');
+// Two ways in, the animation next to the title and the Customize button; both open the same picker.
+let fxOpener = $('fxOpen');
+for (const id of ['fxOpen', 'fxCustomize']) {
+  $(id).addEventListener('click', () => {
+    fxOpener = $(id);
+    setFxPicker($('fxPicker').hidden);
+  });
+}
+$('fxTabPanel').addEventListener('click', () => setFxTab('panel'));
+$('fxTabScreen').addEventListener('click', () => setFxTab('screen'));
+document.addEventListener('pointerdown', event => {
+  if (!$('fxPicker').hidden && !event.target.closest('#fxPicker, #fxOpen, #fxCustomize')) setFxPicker(false);
+});
+// Capture phase: Escape closes the picker first, and only a second Escape hides the whole panel.
+document.addEventListener('keydown', event => {
+  if ($('fxPicker').hidden) return;
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    setFxPicker(false);
+    fxOpener.focus({ preventScroll: true });
+    return;
+  }
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+  if (!step) return;
+  event.preventDefault();
+  if (document.activeElement?.classList.contains('fx-tab')) {
+    if (!$('fxTabs').hidden) {
+      setFxTab(fxTab === 'panel' ? 'screen' : 'panel');
+      $(fxTab === 'panel' ? 'fxTabPanel' : 'fxTabScreen').focus({ preventScroll: true });
+    }
+    return;
+  }
+  const tiles = [...fxTiles[fxTab].values()];
+  const at = tiles.indexOf(document.activeElement);
+  tiles[(at + step + tiles.length) % tiles.length].focus({ preventScroll: true });
+}, true);
 
 const LINES = {
   idle: ['Relay is idle', 'Your agents are waiting for a task.'],
@@ -57,6 +223,7 @@ let inputFocused = false;
 let holding = false;
 let music = null;
 let musicArt = '';
+let musicTrack = '';
 let officeMusicEnabled = true;
 try { officeMusicEnabled = localStorage.getItem('relay.officeMusic') !== 'off'; } catch (_) {}
 $('officeMusic').setAttribute('aria-pressed', String(officeMusicEnabled));
@@ -342,6 +509,8 @@ function setView(next, { focus = true } = {}) {
   if (!VIEWS.includes(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
   view = next;
   $('panel').dataset.view = view;
+  fx.setScene({ mode, view });
+  if (view !== 'music') setFxPicker(false);
   if (view === 'office' && !document.hidden) room.start();
   else room.stop();
   updateGlow();
@@ -853,12 +1022,21 @@ function renderMusic() {
     $('pillArt').hidden = true;
     $('musicSource').hidden = true;
     musicArt = '';
+    musicTrack = '';
+    fx.setPlaying(false);
+    fx.setColour('');
     if (view === 'music' && mode === 'pill') setView(fallbackView(), { focus: false });
     updateGlow();
     return;
   }
   panel.dataset.music = '1';
   const artist = music.artist || music.album || '';
+  const track = `${music.title}\n${artist}`;
+  if (track !== musicTrack) {
+    musicTrack = track;
+    fx.setTrack(track); // every track gets its own tempo and phrasing
+  }
+  fx.setPlaying(!!music.playing);
   $('musicTitle').textContent = music.title;
   $('musicArtist').textContent = artist;
   $('pillTitle').textContent = music.title;
@@ -875,8 +1053,13 @@ function renderMusic() {
       else $(id).removeAttribute('src');
     }
     panel.style.removeProperty('--cover');
+    if (!art) fx.setColour(''); // with a cover, the old colours stay until the new cover's arrive: no flash of the default
     resetCoverShape();
-    if (art) coverColour(art).then(colour => { if (colour && art === musicArt) panel.style.setProperty('--cover', colour); });
+    if (art) coverColour(art).then(colour => {
+      if (!colour || art !== musicArt) return;
+      panel.style.setProperty('--cover', colour);
+      fx.setColour(colour);
+    });
   }
   $('musicArt').hidden = !art;
   $('pillArt').hidden = !art;
@@ -909,6 +1092,8 @@ window.relayPanelMode = info => {
   if (Number.isFinite(info.notchWidth) && info.notchWidth > 0) root.setProperty('--notch-w', `${Math.round(info.notchWidth)}px`);
   mode = next;
   $('panel').dataset.mode = mode;
+  setFxPicker(false); // a freshly shown panel never starts with the picker open
+  fx.setScene({ mode, view });
   updateGlow();
   // A new appearance starts without the keyboard: typing begins only when the person clicks the note field.
   const wasHolding = holding;
@@ -938,6 +1123,7 @@ document.addEventListener('keydown', event => {
 
 room.start();
 document.addEventListener('visibilitychange', () => {
+  fx.refresh(); // stops drawing while the panel is hidden, and picks up again when it shows
   if (!document.hidden && view === 'office') room.start();
   else room.stop();
 });

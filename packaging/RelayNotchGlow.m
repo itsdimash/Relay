@@ -8,6 +8,8 @@ static const NSInteger SparkCount = 3;
 
 typedef NS_ENUM(NSInteger, RelayGlowKind) { RelayGlowKindNone, RelayGlowKindMusic, RelayGlowKindAgents };
 
+static BOOL IsGlowStyle(NSString *style) { return style && [@[ @"off", @"line", @"halo", @"sparks" ] containsObject:style]; }
+
 static NSColor *RGB(CGFloat r, CGFloat g, CGFloat b) { return [NSColor colorWithSRGBRed:r / 255 green:g / 255 blue:b / 255 alpha:1]; }
 static NSColor *Brighter(NSColor *color, CGFloat amount) { return [color blendedColorWithFraction:amount ofColor:NSColor.whiteColor] ?: color; }
 
@@ -43,6 +45,10 @@ static NSColor *AgentColor(NSString *role) {
 @property(nonatomic) BOOL visible;
 @property(nonatomic) NSRect builtFrame;
 @property(nonatomic) CGFloat notchWidth;
+// What the app last asked to show, kept even while the style is "off", so changing the style can show it again.
+@property(nonatomic) RelayGlowKind wantKind;
+@property(nonatomic, copy) NSString *wantActor;
+@property(nonatomic, strong) NSColor *wantColor;
 @end
 
 @implementation RelayNotchGlow
@@ -50,6 +56,7 @@ static NSColor *AgentColor(NSString *role) {
 - (instancetype)init {
     self = [super init];
     if (self) {
+        _style = @"line";
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(screensChanged)
                                                    name:NSApplicationDidChangeScreenParametersNotification object:nil];
     }
@@ -58,6 +65,16 @@ static NSColor *AgentColor(NSString *role) {
 
 - (void)dealloc {
     [NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+- (void)setStyle:(NSString *)style {
+    NSString *clean = IsGlowStyle(style) ? style : @"line";
+    if ([clean isEqualToString:_style]) return;
+    _style = [clean copy];
+    RelayGlowKind kind = self.wantKind;
+    if (kind == RelayGlowKindNone) return; // nothing is lit right now: the new look shows the next time
+    self.kind = RelayGlowKindNone;         // so that present: restyles instead of keeping what it has
+    [self present:kind actor:self.wantActor color:self.wantColor];
 }
 
 #pragma mark - Window and layers
@@ -172,6 +189,9 @@ static NSColor *AgentColor(NSString *role) {
     self.outline.strokeColor = Brighter(main, 0.2).CGColor;
     self.outline.shadowColor = main.CGColor;
 
+    BOOL softGlow = [self.style isEqualToString:@"halo"] || [self.style isEqualToString:@"sparks"];
+    BOOL showSparks = [self.style isEqualToString:@"sparks"];
+    self.halo.hidden = !softGlow;
     NSArray *roles = @[ @"observer", @"builder", @"reviewer" ];
     for (NSInteger i = 0; i < SparkCount; i++) {
         CAShapeLayer *spark = self.sparks[i];
@@ -179,7 +199,7 @@ static NSColor *AgentColor(NSString *role) {
         if (!music && [self.actor isEqualToString:@"you"]) colour = Brighter(AgentColor(@"you"), 0.35);
         spark.strokeColor = colour.CGColor;
         spark.shadowColor = colour.CGColor;
-        spark.hidden = music ? i >= 2 : NO;
+        spark.hidden = !showSparks || (music && i >= 2);
     }
 }
 
@@ -209,10 +229,19 @@ static NSColor *AgentColor(NSString *role) {
     BOOL music = self.kind == RelayGlowKindMusic;
     BOOL reduced = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
     NSTimeInterval pace = music ? 1.7 : ([self.actor isEqualToString:@"you"] ? 0.8 : 1.2);
+    BOOL line = [self.style isEqualToString:@"line"];
     self.halo.opacity = 0.7;
     self.outline.opacity = 0.95;
+    self.outline.lineWidth = line ? 1.6 : 3;
     if (reduced) {
         for (CAShapeLayer *spark in self.sparks) spark.hidden = YES;
+        return;
+    }
+
+    if (line) {
+        // The quiet look: one thin line on the notch edge that breathes slowly. No halo, no sparks.
+        [self.outline addAnimation:[self loopFrom:@0.55 to:@0.95 key:@"opacity" duration:pace * 1.6 ease:YES] forKey:@"breathe"];
+        [self.outline addAnimation:[self loopFrom:@3 to:@9 key:@"shadowRadius" duration:pace * 1.6 ease:YES] forKey:@"swell"];
         return;
     }
 
@@ -220,7 +249,8 @@ static NSColor *AgentColor(NSString *role) {
     [self.halo addAnimation:[self loopFrom:@14 to:@36 key:@"shadowRadius" duration:pace ease:YES] forKey:@"swell"];
     [self.outline addAnimation:[self loopFrom:@8 to:@22 key:@"shadowRadius" duration:pace ease:YES] forKey:@"swell"];
 
-    // Sparks circle the notch. Music uses two; agents use one per agent, the active one longer.
+    // Sparks circle the notch (only in the "sparks" style). Music uses two; agents use one per agent, the active one longer.
+    if (![self.style isEqualToString:@"sparks"]) return;
     NSInteger count = music ? 2 : SparkCount;
     NSTimeInterval lap = pace * 2.4;
     NSArray *roles = @[ @"observer", @"builder", @"reviewer" ];
@@ -241,6 +271,13 @@ static NSColor *AgentColor(NSString *role) {
 #pragma mark - Showing
 
 - (void)present:(RelayGlowKind)kind actor:(NSString *)actor color:(NSColor *)color {
+    self.wantKind = kind;
+    self.wantActor = actor;
+    self.wantColor = color;
+    if ([self.style isEqualToString:@"off"]) {
+        [self dismiss];
+        return;
+    }
     if (![self prepare]) {
         [self hide];
         return;
@@ -276,6 +313,7 @@ static NSColor *AgentColor(NSString *role) {
 // A ring of light spreads from the notch edge and fades.
 - (void)burst {
     if (!self.visible || NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) return;
+    if ([self.style isEqualToString:@"line"]) return; // the quiet look has no ripple
     CAShapeLayer *ring = [self shapeLayerWithWidth:3];
     ring.frame = self.outline.frame;
     ring.path = self.outline.path;
@@ -304,6 +342,14 @@ static NSColor *AgentColor(NSString *role) {
 }
 
 - (void)hide {
+    self.wantKind = RelayGlowKindNone;
+    self.wantActor = nil;
+    self.wantColor = nil;
+    [self dismiss];
+}
+
+// Fades the light out but remembers what was asked.
+- (void)dismiss {
     if (!self.visible) return;
     self.visible = NO;
     self.kind = RelayGlowKindNone;

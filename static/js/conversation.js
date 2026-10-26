@@ -1,6 +1,6 @@
 import { state as appState } from './state.js';
 import { request } from './api.js';
-import { $, e } from './dom.js';
+import { $, e, locale } from './dom.js';
 import { roleNames, sourceFindings, modeNames, providerLabel, terminal, labels } from './constants.js';
 import '../markdown.js';
 import '../review.js';
@@ -96,14 +96,15 @@ function eventBody(event) {
     } catch (_) {}
   }
   if (event.kind === 'tool') return `<details class="step-tool"><summary>Tool activity</summary><code>${e(message)}</code></details>`;
-  return `<div class="step-event-copy">${renderMarkdown(message)}</div>`;
+  // What the agents wrote is theirs; only Relay's own messages are translated.
+  return `<div class="step-event-copy"${event.agent === 'Relay' ? '' : ' data-i18n-strict'}>${renderMarkdown(message)}</div>`;
 }
 
 function renderStepEvents(events) {
   return events.map(event => {
     const who = event.role ? event.role.charAt(0).toUpperCase() + event.role.slice(1) : 'Relay';
     const date = new Date(event.time);
-    const time = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const time = Number.isFinite(date.getTime()) ? date.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) : '';
     const kind = event.kind === 'stage' ? 'Stage' : event.kind === 'control' ? 'Decision' : event.kind === 'tool' ? 'Tool' : 'Update';
     return `<article class="step-event ${e(event.kind || '')}"><div class="step-event-marker" aria-hidden="true"></div><div><div class="step-event-head"><strong>${e(who)}</strong><span>${e(kind)}</span>${time ? `<time datetime="${e(event.time)}">${e(time)}</time>` : ''}</div>${eventBody(event)}</div></article>`;
   }).join('');
@@ -206,7 +207,7 @@ export function createConversation({
     const finished = terminal.has(r.status);
     const created = new Date(r.created);
     $('runBriefLabel').textContent = active ? 'Running prompt' : 'Ran prompt';
-    $('runBriefTime').textContent = Number.isFinite(created.getTime()) ? `Submitted ${created.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : '';
+    $('runBriefTime').textContent = Number.isFinite(created.getTime()) ? `Submitted ${created.toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' })}` : '';
     $('runBriefTime').dateTime = r.created || '';
     $('runBriefText').textContent = r.chat && r.turns?.length ? r.turns[0].task : r.task;
     $('runBriefNote').textContent = active ? 'In progress · this prompt has already been submitted' : 'Already submitted · this is the saved run';

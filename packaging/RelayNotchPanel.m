@@ -5,6 +5,7 @@
 #import <WebKit/WebKit.h>
 
 NSString *const RelayNotchEnabledKey = @"RelayNotchEnabled";
+static NSString *const RelayGlowStyleKey = @"RelayNotchGlowStyle"; // off, line, halo or sparks: the light around the notch
 
 // The panel has three shapes. Heights are measured below the notch band, so they follow the screen's notch.
 typedef NS_ENUM(NSInteger, RelayPanelMode) {
@@ -257,7 +258,7 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 - (instancetype)initWithPageURL:(NSURL *)pageURL {
     self = [super init];
     if (self) {
-        [NSUserDefaults.standardUserDefaults registerDefaults:@{RelayNotchEnabledKey: @YES}];
+        [NSUserDefaults.standardUserDefaults registerDefaults:@{RelayNotchEnabledKey: @YES, RelayGlowStyleKey: @"line"}];
         _pageURL = pageURL;
         [self buildWindow];
         [self buildCatcher];
@@ -270,6 +271,7 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
             [weakSelf showTrackPill];
         };
         _glow = [[RelayNotchGlow alloc] init];
+        _glow.style = [NSUserDefaults.standardUserDefaults stringForKey:RelayGlowStyleKey];
         if (self.enabled) [self startAmbient];
     }
     return self;
@@ -413,6 +415,16 @@ static NSColor *DominantColor(NSString *dataURL) {
                     completionHandler:^(id result, NSError *error) {
         [RelayNowPlaying log:[NSString stringWithFormat:@"page answered: %@", error ? [NSString stringWithFormat:@"FAILED %@", error] : result]];
     }];
+}
+
+// Tells the panel page which look of the light around the notch is saved, so its picker shows the choice.
+- (void)pushGlowStyle {
+    NSString *style = [NSUserDefaults.standardUserDefaults stringForKey:RelayGlowStyleKey] ?: @"line";
+    [self.webView callAsyncJavaScript:@"if (window.relayGlowStyle) window.relayGlowStyle(style);"
+                            arguments:@{ @"style": style }
+                              inFrame:nil
+                       inContentWorld:WKContentWorld.pageWorld
+                    completionHandler:nil];
 }
 
 #pragma mark - Window
@@ -1095,6 +1107,14 @@ static NSColor *DominantColor(NSString *dataURL) {
         [RelayNowPlaying log:@"page is ready"];
         if (self.shown) [self pushMode];
         if (self.nowPlaying.state) [self pushNowPlaying:self.nowPlaying.state];
+        [self pushGlowStyle];
+    } else if ([type isEqualToString:@"glowStyle"]) {
+        // The person picked how the light around the notch looks (Customize, On screen).
+        NSString *style = [body[@"style"] isKindOfClass:NSString.class] ? body[@"style"] : @"";
+        if ([@[ @"off", @"line", @"halo", @"sparks" ] containsObject:style]) {
+            [NSUserDefaults.standardUserDefaults setObject:style forKey:RelayGlowStyleKey];
+            self.glow.style = style;
+        }
     } else if ([type isEqualToString:@"expand"]) {
         // The small panel needs room: a plan to approve, or the person pressed the Office tab.
         NSString *view = [body[@"view"] isEqual:@"office"] ? @"office" : nil;
@@ -1153,6 +1173,7 @@ static NSColor *DominantColor(NSString *dataURL) {
     // The page may have been reloaded while open or while something was playing.
     if (self.shown) [self pushMode];
     if (self.nowPlaying.state) [self pushNowPlaying:self.nowPlaying.state];
+    [self pushGlowStyle];
 }
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {

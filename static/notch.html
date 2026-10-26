@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Relay</title>
 <link rel="stylesheet" href="/notch.css">
+<script src="/i18n.js"></script>
+<script src="/i18n-ru.js"></script>
 <script type="module" src="/notch.js"></script>
 </head>
 <body>
@@ -37,6 +39,15 @@
   <div id="toastBurst" class="toast-burst" aria-hidden="true"></div>
 
   <div class="stage">
+    <canvas id="musicFx" class="music-fx" aria-hidden="true"></canvas>
+    <div id="fxPicker" class="fx-picker" hidden>
+      <div id="fxTabs" class="fx-tabs" role="tablist" aria-label="What to customize" hidden>
+        <button type="button" role="tab" class="fx-tab" id="fxTabPanel" aria-selected="true" aria-controls="fxGridPanel">In panel</button>
+        <button type="button" role="tab" class="fx-tab" id="fxTabScreen" aria-selected="false" aria-controls="fxGridScreen">On screen</button>
+      </div>
+      <div id="fxGridPanel" class="fx-grid" role="radiogroup" aria-label="Music animation in the panel"></div>
+      <div id="fxGridScreen" class="fx-grid" role="radiogroup" aria-label="Light around the notch on the screen" hidden></div>
+    </div>
     <section class="room" aria-label="Your agents">
       <canvas id="room" width="280" height="156" role="img" aria-label="Animated room where your three agents pass work to each other"></canvas>
       <div class="room-hit-targets" aria-label="Inspect an agent">
@@ -136,6 +147,10 @@
     </section>
 
     <section id="music" class="player music" aria-label="Now playing">
+      <button type="button" class="chip quiet fx-customize" id="fxCustomize" aria-haspopup="true" aria-expanded="false" aria-controls="fxPicker" title="Choose the music animation">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h7M15 6h2M3 14h2M10 14h7"/><circle cx="12.5" cy="6" r="2.2"/><circle cx="7.5" cy="14" r="2.2"/></svg>
+        Customize
+      </button>
       <div class="cover">
         <img id="musicArt" class="cover-img" alt="" hidden>
         <svg class="cover-empty" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 15V5.2l8-1.7V13"/><circle cx="6" cy="15" r="2"/><circle cx="14" cy="13" r="2"/></svg>
@@ -148,7 +163,10 @@
         <div class="track">
           <div class="track-head">
             <span id="musicTitle" class="music-title">Nothing is playing</span>
-            <div class="eq mini" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <button type="button" class="fx-open" id="fxOpen" aria-haspopup="true" aria-expanded="false" aria-controls="fxPicker" aria-label="Change animation" title="Change animation">
+              <canvas id="musicMini" class="fx-mini" aria-hidden="true"></canvas>
+              <svg class="fx-off" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.2M7.4 6.5v7M11 3.5v13M14.6 6.5v7M16.8 10H17"/></svg>
+            </button>
           </div>
           <span id="musicArtist" class="music-artist">Start music in any app and it shows up here.</span>
         </div>
@@ -175,7 +193,7 @@
       <span id="pillTitle" class="pill-title"></span>
       <span id="pillArtist" class="pill-artist"></span>
     </div>
-    <div class="eq"><i></i><i></i><i></i><i></i></div>
+    <canvas id="pillFx" class="pill-fx" aria-hidden="true"></canvas>
   </div>
 </main>
 </body>

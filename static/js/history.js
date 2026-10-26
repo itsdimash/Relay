@@ -1,5 +1,5 @@
 import { state as appState } from './state.js';
-import { $, e, scrollBehavior } from './dom.js';
+import { $, e, locale, scrollBehavior } from './dom.js';
 import { request } from './api.js';
 import { terminal } from './constants.js';
 export function createHistory({
@@ -58,7 +58,7 @@ export function createHistory({
       group = day;
       const title = conversationTitle(run),
         date = new Date(run.created);
-      const time = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {
+      const time = Number.isFinite(date.getTime()) ? date.toLocaleTimeString(locale(), {
         hour: '2-digit',
         minute: '2-digit'
       }) : '';

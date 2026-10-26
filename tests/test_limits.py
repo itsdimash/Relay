@@ -271,7 +271,7 @@ class WiringTests(unittest.TestCase):
         self.assertIn('self.app.limits.record_claude(event)', processes)
         self.assertIn("path == '/api/limits'", http)
         self.assertIn("data['limits'] = self.app.limits.snapshot()", http)
-        self.assertIn("'limits')", http)  # the shared page module is served
+        self.assertIn("'limits'", http)  # the shared page module is served
 
     def test_both_screens_show_the_numbers(self):
         notch = (ROOT / 'static' / 'notch.js').read_text()

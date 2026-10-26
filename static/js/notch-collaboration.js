@@ -46,7 +46,7 @@ export function createCollaboration({ doc = document, openRun, reducedMotion = f
     const state = active ? 'Working now' : run?.paused && run.actor === selectedRole ? 'Paused' : activity ? 'Last saved activity' : 'No saved activity';
     let time = '';
     const date = new Date(activity?.time || '');
-    if (Number.isFinite(date.getTime())) time = ` · ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    if (Number.isFinite(date.getTime())) time = ` · ${date.toLocaleTimeString(globalThis.relayI18n?.locale(), { hour: '2-digit', minute: '2-digit' })}`;
     $('agentCardState').textContent = state + time;
     $('agentCardMessage').textContent = activity?.message || (active ? 'This agent has started. Its next update will appear here.' : 'This role has not saved an update for this run.');
     $('openAgentStep').disabled = !run;

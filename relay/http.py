@@ -115,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'limits')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'notch-music-fx', 'limits', 'appearance')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -123,6 +123,10 @@ class Handler(BaseHTTPRequestHandler):
         files['/workspace.css'] = ('workspace.css', 'text/css; charset=utf-8')
         files['/motion.css'] = ('motion.css', 'text/css; charset=utf-8')
         files['/brand.css'] = ('brand.css', 'text/css; charset=utf-8')
+        files['/appearance.css'] = ('appearance.css', 'text/css; charset=utf-8')
+        files['/theme.js'] = ('theme.js', 'text/javascript; charset=utf-8')
+        files['/i18n.js'] = ('i18n.js', 'text/javascript; charset=utf-8')
+        files['/i18n-ru.js'] = ('i18n-ru.js', 'text/javascript; charset=utf-8')
         files['/notch'] = ('notch.html', 'text/html; charset=utf-8')
         files['/notch.css'] = ('notch.css', 'text/css; charset=utf-8')
         files['/notch.js'] = ('notch.js', 'text/javascript; charset=utf-8')

@@ -163,7 +163,7 @@ class NotchHTTPTests(unittest.TestCase):
         self.assertEqual(data['run']['plan']['id'], 'p1')
 
     def test_panel_page_and_assets_are_served(self):
-        for path, kind in [('/notch', 'text/html'), ('/notch.css', 'text/css'), ('/notch.js', 'javascript'), ('/js/notch-room.js', 'javascript'), ('/js/notch-collaboration.js', 'javascript'), ('/js/notch-activity.js', 'javascript'), ('/js/task-queue.js', 'javascript')]:
+        for path, kind in [('/notch', 'text/html'), ('/notch.css', 'text/css'), ('/notch.js', 'javascript'), ('/js/notch-room.js', 'javascript'), ('/js/notch-collaboration.js', 'javascript'), ('/js/notch-activity.js', 'javascript'), ('/js/notch-music-fx.js', 'javascript'), ('/js/task-queue.js', 'javascript')]:
             status, headers, body = self.get(path)
             self.assertEqual(status, 200)
             self.assertIn(kind, headers['Content-Type'])

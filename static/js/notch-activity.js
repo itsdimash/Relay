@@ -37,7 +37,7 @@ export function createActivity({ doc = document, post, openRun }) {
       who.textContent = event.role ? event.role.charAt(0).toUpperCase() + event.role.slice(1) + (event.agent && event.agent.toLowerCase() !== event.role ? ` · ${event.agent}` : '') : event.agent || 'Relay';
       const time = doc.createElement('time');
       const date = new Date(event.time);
-      time.textContent = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+      time.textContent = Number.isFinite(date.getTime()) ? date.toLocaleTimeString(globalThis.relayI18n?.locale(), {hour:'2-digit',minute:'2-digit'}) : '';
       time.dateTime = event.time || '';
       const message = doc.createElement('p');
       message.textContent = event.message;

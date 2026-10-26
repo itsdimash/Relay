@@ -304,8 +304,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .music[data-playing] .progress-fill { background: linear-gradient(90deg, var(--text), color-mix(in srgb, var(--cover, var(--brand)) 70%, #fff)); }
 .track-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .track-head .music-title { flex: 1; min-width: 0; }
-.eq.mini { display: none; flex: none; height: 14px; }
-.music[data-playing] .eq.mini { display: flex; }
 .player-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .track { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .music-title, .music-artist { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -337,22 +335,53 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .music:not([data-playing]) .icon-play { display: block; }
 .music:not([data-playing]) .icon-pause { display: none; }
 
-/* Track-change pill: cover on one side of the notch, a moving equalizer on the other, the name below */
+/* Music animation: a canvas behind the whole Music view, a small one beside the title that opens the picker, and a
+   preview tile for each style in the picker. The drawing itself is static/js/notch-music-fx.js. */
+.stage > .music-fx { position: absolute; z-index: 0; left: -18px; top: 0; width: calc(100% + 36px); height: calc(100% + 14px); pointer-events: none; }
+.panel[data-view="music"] .stage > .music-fx { display: block; }
+.panel[data-fx="off"] .stage > .music-fx { display: none; }
+.player { position: relative; z-index: 1; }
+.player-main { text-shadow: 0 1px 10px rgba(0, 0, 0, .55); }
+.fx-customize { position: absolute; z-index: 2; top: -6px; right: 0; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 8px; text-shadow: none; background: rgba(255, 255, 255, .06); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.fx-customize svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.fx-customize[aria-expanded="true"] { color: var(--text); background: rgba(255, 255, 255, .16); }
+.fx-open { position: relative; flex: none; display: grid; place-items: center; width: 54px; height: 26px; margin: -6px -8px -6px 0; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--muted); transition: background-color .15s, color .15s; }
+.fx-open:hover, .fx-open[aria-expanded="true"] { background: rgba(255, 255, 255, .13); color: var(--text); }
+.fx-open:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.fx-mini { display: block; width: 44px; height: 18px; }
+.fx-off { display: none; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; opacity: .7; }
+.panel[data-fx="off"] .fx-mini { display: none; }
+.panel[data-fx="off"] .fx-off { display: block; }
+.stage > .fx-picker:not([hidden]) { display: flex; flex-direction: column; justify-content: center; align-items: stretch; position: absolute; z-index: 5; inset: 2px 0 0; max-width: 560px; margin-inline: auto; gap: 12px; padding: 10px 12px; border-radius: 16px; border: 1px solid var(--line);
+  background: color-mix(in srgb, #04070b 95%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); animation: fx-in .24s cubic-bezier(.2, .8, .2, 1); }
+@keyframes fx-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: none; } }
+.fx-tabs { align-self: center; display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: rgba(255, 255, 255, .08); }
+.fx-tab { padding: 3px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; transition: background-color .15s, color .15s; }
+.fx-tab:hover { color: var(--text); }
+.fx-tab[aria-selected="true"] { background: rgba(255, 255, 255, .18); color: var(--text); }
+.fx-tab:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.fx-grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.fx-tile { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 600; line-height: 1.3; text-align: center; transition: color .15s, transform .15s; }
+.fx-tile:hover { color: var(--text); }
+.fx-tile:active { transform: scale(.96); }
+.fx-tile canvas, .fx-none { display: block; width: 100%; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: #0a0e14; transition: border-color .2s, box-shadow .2s; }
+.fx-none { display: grid; place-items: center; }
+.fx-none svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; opacity: .7; }
+.fx-tile:hover canvas, .fx-tile:hover .fx-none { border-color: rgba(255, 255, 255, .32); }
+.fx-tile[aria-checked="true"] { color: var(--text); }
+.fx-tile[aria-checked="true"] canvas, .fx-tile[aria-checked="true"] .fx-none { border-color: var(--cover, var(--brand)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--cover, var(--brand)) 55%, transparent); }
+.fx-tile:focus-visible { outline: none; }
+.fx-tile:focus-visible canvas, .fx-tile:focus-visible .fx-none { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* Track-change pill: cover on one side of the notch, a moving animation on the other, the name below */
 .pill { display: none; height: 100%; margin: 0 -18px; padding: 0 0 8px; grid-template-columns: minmax(0, 1fr) calc(var(--notch-w) + 14px) minmax(0, 1fr); grid-template-rows: var(--notch-h) minmax(0, 1fr); }
 .panel[data-mode="pill"] { padding: 0 18px; }
 .panel[data-mode="pill"] .bar, .panel[data-mode="pill"] .stage { display: none; }
 .panel[data-mode="pill"] .pill { display: grid; }
 .pill-art { grid-column: 1; grid-row: 1; justify-self: start; align-self: center; margin-left: 20px; width: var(--pill-w, 24px); height: var(--pill-h, 24px); border-radius: 6px; object-fit: contain; background: var(--bg-2); }
-.eq { height: 16px; display: flex; align-items: flex-end; gap: 3px; }
-.pill .eq { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; margin-right: 22px; }
-.eq i { display: block; width: 3px; height: 100%; border-radius: 2px; background: var(--cover, var(--brand)); transform-origin: bottom; transform: scaleY(.25); }
-.pill[data-playing] .eq i, .music[data-playing] .eq i { animation: eq 0.9s ease-in-out infinite alternate; }
+.pill-fx { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; margin-right: 18px; width: 68px; height: 26px; }
 .pill[data-playing] .pill-art { animation: beat .9s ease-in-out infinite alternate; box-shadow: 0 0 14px color-mix(in srgb, var(--cover, var(--brand)) 55%, transparent); }
 @keyframes beat { from { transform: scale(1); } to { transform: scale(1.14); } }
-.eq i:nth-child(2) { animation-delay: -.35s; }
-.eq i:nth-child(3) { animation-delay: -.7s; }
-.eq i:nth-child(4) { animation-delay: -.15s; }
-@keyframes eq { 0% { transform: scaleY(.2); } 100% { transform: scaleY(1); } }
 .pill-text { grid-column: 1 / -1; grid-row: 2; align-self: center; padding: 0 28px; text-align: center; display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .pill-title, .pill-artist { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pill-title { font-size: 13px; font-weight: 650; }
@@ -427,5 +456,5 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .status::before, .approval, .panel[data-glow]::before, .panel[data-glow] .bar::after, .panel[data-working] #room,
   .music[data-playing] .cover, .pill[data-playing] .pill-art, .tab[data-live]::after { animation: none; }
   .panel[data-glow] .bar::after { background-position: 50% 0; }
-  .pill[data-playing] .eq i, .music[data-playing] .eq i { animation: none; transform: scaleY(.7); }
+  .fx-picker { animation: none !important; }
 }

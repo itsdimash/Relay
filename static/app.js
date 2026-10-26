@@ -13,6 +13,7 @@ import { createTasks } from './js/tasks.js';
 import { createUpdates } from './js/updates.js';
 import { createTaskQueue } from './js/task-queue.js';
 import { createStorage } from './js/storage.js';
+import { createAppearance } from './js/appearance.js';
 const updates = createUpdates();
 const notifications = createNotifications();
 const recovery = createRecovery({ render: () => conversation.render() });
@@ -64,7 +65,14 @@ const taskQueue = createTaskQueue({
   render: () => conversation.render()
 });
 const storage = createStorage({ notifications });
-for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates, taskQueue, storage]) feature.init();
+const appearance = createAppearance();
+// Dates and times are written in the page language, so a language change redraws the open chat and the history.
+window.addEventListener('relaylangchange', () => {
+  state.rendered = '';
+  $('history').dataset.key = '';
+  conversation.render();
+});
+for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates, taskQueue, storage, appearance]) feature.init();
 try {
   const draft = JSON.parse(sessionStorage.getItem('relay.devDraft') || 'null');
   if (draft) {

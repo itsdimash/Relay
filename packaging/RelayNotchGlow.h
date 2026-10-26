@@ -5,6 +5,10 @@
 #import <Cocoa/Cocoa.h>
 
 @interface RelayNotchGlow : NSObject
+// How the light looks, chosen by the person: "line" (a thin steady line on the notch edge, the quiet default),
+// "halo" (the line with a soft breathing glow), "sparks" (the halo with bright sparks that circle the notch) or "off".
+// Anything else counts as "line". Changing it restyles whatever is lit right now.
+@property(nonatomic, copy) NSString *style;
 // Music is playing. The colour is the cover's.
 - (void)showMusicColor:(NSColor *)color;
 // Agents are working: "observer", "builder", "reviewer", "you" (waiting for the person) or anything else.

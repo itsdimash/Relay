@@ -86,11 +86,12 @@ class PanelShapeTests(unittest.TestCase):
     def test_page_has_four_tabs_and_a_pill(self):
         html = (ROOT / 'static' / 'notch.html').read_text()
         for element in ('id="tabMusic"', 'id="tabNotes"', 'id="tabTask"', 'id="tabOffice"', 'id="pill"', 'id="pillArt"',
-                        'id="pillTitle"', 'id="pillArtist"', 'class="eq"', 'data-mode='):
+                        'id="pillTitle"', 'id="pillArtist"', 'id="pillFx"', 'data-mode='):
             self.assertIn(element, html)
-        # Every tab is an icon with an accessible name.
+        # Every icon tab has an accessible name (the text tabs of the animation picker are named by their words).
         for tab in re.findall(r'<button[^>]*role="tab"[^>]*>', html):
-            self.assertIn('aria-label=', tab)
+            if 'class="fx-tab"' not in tab:
+                self.assertIn('aria-label=', tab)
 
     def test_office_tab_is_always_there_and_opens_the_full_panel(self):
         css = (ROOT / 'static' / 'notch.css').read_text()

@@ -11,6 +11,9 @@
 static const int RelayPreferredPort = 48765;
 static NSString *const RelaySkipMoveKey = @"RelaySkipMoveToApplications";
 
+static NSString *const RelayNightWindowKey = @"RelayNightWindow";   // the theme the dashboard showed last, so the window opens in it
+static NSString *const RelayThemeChoiceKey = @"RelayThemeChoice";   // "system", "light" or "night"
+
 static NSColor *RelayColor(unsigned int rgb) {
     return [NSColor colorWithRed:((rgb >> 16) & 0xff) / 255.0
                            green:((rgb >> 8) & 0xff) / 255.0
@@ -18,7 +21,20 @@ static NSColor *RelayColor(unsigned int rgb) {
                            alpha:1.0];
 }
 
-@interface RelayAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, RelayNotchPanelDelegate>
+// The window frame follows the dashboard's theme: the colour behind the page, the title bar and the scroll bars.
+// With "system" the window must not be forced either way: the page reads the Mac's setting through the window's
+// appearance, so a forced dark window would make System look dark forever.
+static void RelayApplyWindowLook(NSWindow *window, BOOL night, BOOL followSystem) {
+    window.backgroundColor = RelayColor(night ? 0x0d121b : 0xeceff4);
+    window.appearance = followSystem ? nil : [NSAppearance appearanceNamed:night ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+}
+
+static BOOL RelayMacIsDark(void) {
+    NSAppearanceName name = [NSApp.effectiveAppearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+    return [name isEqualToString:NSAppearanceNameDarkAqua];
+}
+
+@interface RelayAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, RelayNotchPanelDelegate>
 @property(nonatomic, strong) NSTask *server;
 @property(nonatomic, strong) NSMutableString *outputBuffer;
 @property(nonatomic, strong) NSMutableString *errorBuffer;
@@ -325,6 +341,8 @@ static NSColor *RelayColor(unsigned int rgb) {
     self.serverURL = url;
 
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+    // The dashboard tells the window which theme it shows (Appearance menu in its header).
+    [configuration.userContentController addScriptMessageHandler:self name:@"relayWindow"];
     WKWebView *webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];
     webView.navigationDelegate = self;
     webView.UIDelegate = self;
@@ -341,9 +359,11 @@ static NSColor *RelayColor(unsigned int rgb) {
     // The notch panel keeps the app alive after this window is closed, so the window must survive closing.
     window.releasedWhenClosed = NO;
     window.minSize = NSMakeSize(900, 620);
-    window.backgroundColor = RelayColor(0xeceff4);
     window.titlebarAppearsTransparent = YES;
-    window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    NSString *savedChoice = [NSUserDefaults.standardUserDefaults stringForKey:RelayThemeChoiceKey];
+    BOOL followSystem = [savedChoice isEqualToString:@"system"];
+    BOOL savedNight = followSystem ? RelayMacIsDark() : [NSUserDefaults.standardUserDefaults boolForKey:RelayNightWindowKey];
+    RelayApplyWindowLook(window, savedNight, followSystem);
     webView.frame = ((NSView *)window.contentView).bounds;
     [window.contentView addSubview:webView];
     [window center];
@@ -358,6 +378,22 @@ static NSColor *RelayColor(unsigned int rgb) {
         NSURL *notchURL = [NSURL URLWithString:@"notch" relativeToURL:url].absoluteURL;
         self.notch = [[RelayNotchPanel alloc] initWithPageURL:notchURL];
         self.notch.delegate = self;
+    }
+}
+
+#pragma mark - WKScriptMessageHandler
+
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (![message.name isEqualToString:@"relayWindow"] || ![message.body isKindOfClass:NSDictionary.class]) return;
+    if (![self isLocalDashboardURL:message.frameInfo.request.URL]) return; // only Relay's own page may ask
+    NSDictionary *body = message.body;
+    if ([body[@"type"] isEqual:@"theme"] && self.window) {
+        BOOL night = [body[@"night"] boolValue];
+        NSString *choice = [body[@"choice"] isKindOfClass:NSString.class] ? body[@"choice"] : @"light";
+        BOOL followSystem = [choice isEqualToString:@"system"];
+        [NSUserDefaults.standardUserDefaults setBool:night forKey:RelayNightWindowKey];
+        [NSUserDefaults.standardUserDefaults setObject:(followSystem ? @"system" : (night ? @"night" : @"light")) forKey:RelayThemeChoiceKey];
+        RelayApplyWindowLook(self.window, night, followSystem);
     }
 }
 
