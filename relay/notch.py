@@ -19,6 +19,9 @@ ACTORS = {
 
 QUIET_KINDS = {'stage'}
 
+# A finished task stays on the notch this long, then the panel goes back to idle.
+FINISHED_TTL_SECONDS = 5 * 60
+
 
 def clip(text, limit):
     text = ' '.join(str(text or '').split())
@@ -48,6 +51,26 @@ def last_message(info):
             continue
         return {'agent': event.get('agent', ''), 'message': clip(event['message'], 160)}
     return None
+
+
+def parse_time(value):
+    try:
+        stamp = dt.datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=dt.timezone.utc)
+
+
+def finished_at(info):
+    """When a run ended: the time of its last saved event, else when it was created."""
+    stamp = parse_time(info.get('finished_at'))
+    if stamp:
+        return stamp
+    for event in reversed(info.get('events') or []):
+        stamp = parse_time(event.get('time'))
+        if stamp:
+            return stamp
+    return parse_time(info.get('created'))
 
 
 def seconds_since(started, now):
@@ -147,12 +170,25 @@ def describe_run(info, now):
     return result
 
 
-def snapshot(runs, now=None):
-    """Pick the run to show: one still running, otherwise the newest. runs are plain state dictionaries."""
+def full(info, load):
+    """A chat kept only as its summary is read from disk before it is described."""
+    if info.get('light'):
+        info = load(info['id']) if load else None
+    return info or {}
+
+
+def snapshot(runs, now=None, load=None):
+    """Pick the run to show: one still running, otherwise one that finished in the last few minutes.
+    Older finished runs are not shown, so the notch returns to idle. runs are plain state dictionaries."""
     now = now or dt.datetime.now(dt.timezone.utc)
-    visible = list(runs)
-    if not visible:
+    running = [info for info in runs if info.get('status') not in TERMINAL]
+    if running:
+        return {'run': describe_run(full(max(running, key=lambda info: info.get('created', '')), load), now)}
+    recent = []
+    for info in runs:
+        ended = finished_at(info)
+        if ended and (now - ended).total_seconds() <= FINISHED_TTL_SECONDS:
+            recent.append((ended, info))
+    if not recent:
         return {'run': None}
-    running = [info for info in visible if info.get('status') not in TERMINAL]
-    chosen = max(running or visible, key=lambda info: info.get('created', ''))
-    return {'run': describe_run(chosen, now)}
+    return {'run': describe_run(full(max(recent, key=lambda item: item[0])[1], load), now)}

@@ -76,6 +76,16 @@ class DescribeTests(unittest.TestCase):
         self.assertEqual(notch.snapshot([new_done], NOW)['run']['id'], 'b')
         self.assertIsNone(notch.snapshot([], NOW)['run'])
 
+    def test_finished_task_disappears_after_five_minutes(self):
+        def finished(minutes, **extra):
+            stamp = (NOW - dt.timedelta(minutes=minutes)).isoformat()
+            return info('done', id='f', created='2026-01-01T09:00:00+00:00', events=[{'time': stamp, 'kind': 'stage', 'message': 'Done'}], **extra)
+        self.assertEqual(notch.snapshot([finished(4)], NOW)['run']['id'], 'f')
+        self.assertIsNone(notch.snapshot([finished(6)], NOW)['run'])
+        self.assertIsNone(notch.snapshot([finished(360)], NOW)['run'])
+        running = info('building', id='r', created='2026-01-01T08:00:00+00:00')
+        self.assertEqual(notch.snapshot([finished(360), running], NOW)['run']['id'], 'r')
+
     def test_role_activity_keeps_same_provider_roles_distinct_and_reads_structured_updates(self):
         events = [
             {'role': 'observer', 'kind': 'message', 'message': '{"overview":"Inspected the form","summary":"Plan"}', 'time': 'saved'},
