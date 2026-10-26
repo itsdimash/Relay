@@ -21,7 +21,7 @@ class RunHistoryInterfaceTests(unittest.TestCase):
     def test_observer_steps_are_hidden_behind_a_working_indicator_and_reports_are_self_contained(self):
         root = Path(__file__).parents[1]
         conversation = (root / 'static/js/conversation.js').read_text()
-        workflow = (root / 'relay/workflow.py').read_text()
+        workflow = (root / 'relay/workflow.py').read_text() + (root / 'relay/steps.py').read_text()
 
         self.assertIn("['tool', 'log'].includes(event.kind) || event.role === 'observer' && event.kind === 'review'", conversation)
         self.assertIn('Observer is working…', conversation)
