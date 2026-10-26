@@ -41,6 +41,15 @@
 .history .history-more { width:38px;height:44px;min-height:44px;margin:3px 0 0;padding:0;display:grid;place-items:center;color:#839187;background:transparent;border:0;border-radius:7px;transition:color 100ms ease,background 100ms ease; }
 .history .history-more[aria-expanded=true] { color:#244e35;background:#e1ebe4; }
 .history .history-open:focus-visible,.history .history-more:focus-visible { outline:2px solid #58896a;outline-offset:-2px; }
+.storage { margin:8px 9px 0;font-size:12px;color:#4d6055; }
+.storage summary { cursor:pointer;padding:6px 0;color:#75847b; }
+.storage-body { display:grid;gap:6px;padding:4px 0 8px; }
+.storage-body label { font-weight:550; }
+.storage-body select { font:inherit;padding:5px 6px;border:1px solid #d3ddd6;border-radius:6px;background:transparent;color:inherit; }
+.storage-body .hint { margin:2px 0 0;font-size:11px;color:#7a8c80; }
+.history-show-more { display:block;width:calc(100% - 18px);margin:10px 9px 4px;padding:8px;border:1px solid #d3ddd6;border-radius:8px;background:transparent;color:#4d6055;font:inherit;font-size:12px;cursor:pointer; }
+.history-show-more:hover { background:#eef3ef; }
+.history-show-more:focus-visible { outline:2px solid #225b4d;outline-offset:2px; }
 .history-empty { padding:27px 14px;text-align:center;color:#7a8c80; }
 .history-empty svg { margin-bottom:10px; }
 .history-empty p { font-size:12px;font-weight:550;color:#54695a; }

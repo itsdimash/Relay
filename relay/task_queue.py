@@ -96,12 +96,7 @@ def remove_task(app, ident):
         if entry is None:
             raise ValueError('This queued task no longer exists.')
         write_queue(app, [item for item in items if item['id'] != ident])
-        # Keep a recoverable copy, matching Relay's local-history convention.
-        original = app.DATA / 'queue' / (ident + '.json')
-        if original.exists():
-            trash = app.DATA / 'queue' / 'removed'
-            trash.mkdir(exist_ok=True)
-            original.replace(trash / original.name)
+        (app.DATA / 'queue' / (ident + '.json')).unlink(missing_ok=True)
         return queue_snapshot(app)
 
 

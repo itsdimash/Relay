@@ -12,6 +12,7 @@ import { createFindings } from './js/findings.js';
 import { createTasks } from './js/tasks.js';
 import { createUpdates } from './js/updates.js';
 import { createTaskQueue } from './js/task-queue.js';
+import { createStorage } from './js/storage.js';
 const updates = createUpdates();
 const notifications = createNotifications();
 const recovery = createRecovery({ render: () => conversation.render() });
@@ -62,7 +63,8 @@ const taskQueue = createTaskQueue({
   clearSourceBrief: () => findings.clearSourceBrief(),
   render: () => conversation.render()
 });
-for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates, taskQueue]) feature.init();
+const storage = createStorage({ notifications });
+for (const feature of [recovery, clarification, teams, projects, attachments, history, conversation, findings, tasks, updates, taskQueue, storage]) feature.init();
 try {
   const draft = JSON.parse(sessionStorage.getItem('relay.devDraft') || 'null');
   if (draft) {

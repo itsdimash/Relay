@@ -140,7 +140,7 @@ class RecoveryTests(unittest.TestCase):
         run=self.new_task();saved=json.loads((run.folder/'state.json').read_text())
         saved['status']='reviewing';(run.folder/'state.json').write_text(json.dumps(saved))
         s.RUNS.clear();s.ACTIVE=None;s.load_runs()
-        loaded=s.RUNS[run.id];self.assertEqual(loaded['status'],'interrupted')
+        loaded=s.run_info(run.id);self.assertEqual(loaded['status'],'interrupted')
         self.assertEqual(loaded['interrupted_stage'],'reviewing')
         s.recover_run(run.id,loaded['workflow']['id']);recovered=s.RUNS[run.id];self.tasks.append(recovered)
         self.assertTrue(recovered.finished.wait(7));self.assertEqual(recovered.info['status'],'done')

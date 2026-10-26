@@ -119,7 +119,7 @@ print(json.dumps({'type':'result','structured_output':{'status':'observed','summ
                 try:
                     token=self.wait_for(lambda:request('/api/state'))['token']
                     ident=request('/api/run',{'task':'Fixture','project':str(project),'rounds':1,'minutes':1})['id']
-                    def state():return next(r for r in request('/api/state')['runs'] if r['id']==ident)
+                    def state():return next(r for r in request('/api/state?selected='+ident)['runs'] if r['id']==ident)
                     plan=self.wait_for(lambda:(v if (v:=state())['status']=='awaiting_approval' else None))
                     workspace=Path(plan['workspace'])
                     self.assertFalse(s.git(workspace,'status','--porcelain').strip())

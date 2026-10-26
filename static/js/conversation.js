@@ -1,4 +1,5 @@
 import { state as appState } from './state.js';
+import { request } from './api.js';
 import { $, e } from './dom.js';
 import { roleNames, sourceFindings, modeNames, providerLabel, terminal, labels } from './constants.js';
 import '../markdown.js';
@@ -136,11 +137,30 @@ export function createConversation({
     appState.rendered = '';
     appliedDestination = hash;
   }
+  let loadingDetails = null;
+  /** The list sends only a summary of chats that are not open; fetch the whole chat once it is selected. */
+  async function loadDetails(id) {
+    if (loadingDetails === id) return;
+    loadingDetails = id;
+    try {
+      const state = await request('/api/state');
+      appState.runs = state.runs;
+      if (appState.runs.find(run => run.id === id)?.light) return;
+      appState.rendered = '';
+      render();
+    } catch (_) {
+      /* the next poll tries again */
+    } finally {
+      loadingDetails = null;
+    }
+  }
   function render() {
     applyDestination();
     renderHistory();
     updateButtons();
-    const r = appState.runs.find(x => x.id === appState.selected);
+    const found = appState.runs.find(x => x.id === appState.selected);
+    if (found?.light) loadDetails(found.id);
+    const r = found?.light ? undefined : found;
     document.querySelector('.activity').hidden = !r;
     document.querySelector('.content').classList.toggle('run-open', !!r);
     renderClarification(r);

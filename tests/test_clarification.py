@@ -116,7 +116,7 @@ class ClarificationWorkflowTests(unittest.TestCase):
     def test_restart_preserves_questions_without_resuming_or_approving(self):
         task=self.start_task();destination=self.base/'restart-data';shutil.copytree(s.DATA,destination)
         with patch.object(s,'DATA',destination),patch.object(s,'RUNS',{}):
-            s.load_runs();saved=s.RUNS[task.id]
+            s.load_runs();saved=s.run_info(task.id)
             self.assertEqual(saved['status'],'interrupted')
             self.assertEqual(saved['clarification'],task.info['clarification'])
             self.assertNotIn('approved_plan_id',saved)

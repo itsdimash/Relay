@@ -86,7 +86,8 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(reloaded.queue_snapshot()['items'][0]['id'], second['id'])
         reloaded.remove_queued_task(first['id'])
         self.assertEqual(len(reloaded.queue_snapshot()['items']), 1)
-        self.assertTrue((self.app.DATA/'queue'/'removed'/(first['id']+'.json')).is_file())
+        self.assertFalse((self.app.DATA/'queue'/(first['id']+'.json')).exists())
+        self.assertFalse((self.app.DATA/'queue'/'removed').exists())
 
     def test_missing_project_and_shutdown_do_not_consume_task(self):
         entry = self.app.add_queued_task(self.brief())['items'][0]

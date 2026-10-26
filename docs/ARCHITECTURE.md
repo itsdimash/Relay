@@ -30,14 +30,16 @@ The browser does not connect to model APIs directly. Python launches the install
 | `relay/application.py` | Composition root; owns per-instance runtime state and binds service functions, Run, and Handler |
 | `relay/contracts.py` | Shared report schema, role/mode constants, image limits, and cancellation exception |
 | `relay/http.py` | Local HTTP routes, Host/token/Origin checks, and allowlisted static responses |
-| `relay/workflow.py` | Run state machine, plan approval, clarification, checkpoints, snapshots, and review rounds |
+| `relay/workflow.py` | Run state, checkpoints, snapshots, event log, and the loop that runs the saved step |
 | `relay/processes.py` | Run process-control mixin: subprocess groups, stream draining, event decoding, and cancellation |
 | `relay/providers.py` | CLI discovery, model/team validation, restricted commands, and Run provider-call mixin |
 | `relay/git_ops.py` | Git inspection, bounded file previews, repository identity, and complete patch generation |
 | `relay/reports.py` | Report/question validation, check parsing, metadata, follow-up context, and timestamps |
 | `relay/attachments.py` | Image decoding and task-scoped saved attachment access |
 | `relay/registry.py` | Project and team preset persistence, plus folder browsing |
-| `relay/history.py` | Startup record loading, report lookup, state snapshots, and Trash/restore |
+| `relay/history.py` | Chat saving, startup summaries, on-demand full loading, report lookup, dashboard snapshots, and permanent deletion |
+| `relay/retention.py` | Optional limits on how many chats or how much disk space history may use |
+| `relay/steps.py` | The stages of a task (observe, clarify, approve, build, review, decide, chat), one method each |
 | `relay/recovery.py` | Recovery eligibility, approval/workspace validation, and explicit worker admission |
 | `relay/lifecycle.py` | Startup, instance lock, dev revision, signal handling, and graceful shutdown |
 | `static/markdown.js` | Escaping-first Markdown subset renderer; raw HTML and non-HTTP(S) links disabled |
@@ -134,9 +136,9 @@ SIGINT and SIGTERM block new task admission, request cancellation, terminate the
 
 ## Persistence and history
 
-Project saves and state snapshots use a temporary file and replacement. Readable events append to `events.jsonl` and are also included in `state.json`. Raw captured CLI lines append to `provider-events.jsonl`; prompts and final builder reports are separate files.
+Project saves and state snapshots use a temporary file and replacement. Readable events are appended to `events.jsonl` only; `state.json` does not repeat them (`events_start` marks where the current turn's events begin, and older saves that embedded their events still open). Each save also writes a small `summary.json` (title, status, dates) that startup reads instead of the full state. Raw captured CLI lines append to `provider-events.jsonl`; prompts and final builder reports are separate files.
 
-`state.json` is the dashboard snapshot, not a durable transaction journal. A crash can leave its last snapshot behind the appended event log. Startup does not replay events. Finished chats can be moved to `data/trash/<task-id>/` and restored. A worker completion event blocks deletion while its final writes are pending. Deletion preserves the Git worktree and does not affect provider-side histories. No disk quota, permanent Trash purge, encryption, or automatic worktree cleanup exists.
+`state.json` is the dashboard snapshot, not a durable transaction journal. A crash can leave its last snapshot behind the appended event log. Startup does not replay events. Only summaries of finished chats stay in memory; a chat's full state is read from disk when it is opened, exported, continued or recovered. Deleting a finished chat is permanent: its folder and baseline are removed (there is no Trash; folders left by older versions are cleaned at startup). A worker completion event blocks deletion while its final writes are pending. Deletion never touches your project folder or older working copies and does not affect provider-side histories. No disk quota, permanent Trash purge, encryption, or automatic worktree cleanup exists.
 
 Tracked diffs use `git diff HEAD`. New files are listed separately for review and included in `changes.patch`. A temporary Git index reads HEAD and stages the final working tree only into that temporary index. The binary, full-index patch includes additions, deletions, modes and links without changing the real index. Ignored files are excluded. Large diff excerpts and builder reports are bounded in review prompts, and the reviewer is instructed to read the actual files. A history entry records results, not a reproducible proof that all checks succeeded.
 
@@ -149,7 +151,7 @@ All routes require a recognized localhost Host header. Mutating POST requests re
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/` and named static assets | Dashboard and icons; assets are allowlisted |
-| GET | `/api/state` | All stored task snapshots and browser mutation token |
+| GET | `/api/state` | Every chat as a small summary (`light: true`), except running chats and the one named by `?selected=<id>`, which are complete; plus the browser mutation token |
 | GET | `/api/export?run=<id>` | Download a saved complete patch for a finished task |
 | GET | `/api/dev` | Dev-only revision and busy state; returns 404 outside dev mode |
 | GET | `/api/models` | Provider model choices and effort metadata |
@@ -160,7 +162,9 @@ All routes require a recognized localhost Host header. Mutating POST requests re
 | POST | `/api/projects/save` | Validate and save a name and folder |
 | POST | `/api/projects/remove` | Remove an entry, preserving its files |
 | POST | `/api/folders` | List visible subfolders of a local path; at most 500 entries |
-| POST | `/api/history/delete`, `/api/history/restore` | Move a finished chat to local Trash, or restore it; worktree preserved |
+| POST | `/api/history/delete` | Delete a finished chat permanently; your project files are untouched |
+| GET | `/api/storage` | Saved chats, disk use, and the optional history limits |
+| POST | `/api/storage/policy` | Set the limits (`max_chats`, `max_mb`); `preview: true` only counts what would be deleted |
 | POST | `/api/run` | Validate options and create one task |
 | POST | `/api/pause`, `/api/resume`, `/api/stop` | Control the specified active task |
 | POST | `/api/recover` | Validate a saved checkpoint and explicitly continue the same task |
@@ -255,7 +259,8 @@ The dashboard uses native browser ES modules and needs no bundler or package ins
 | --- | --- |
 | `static/js/notifications.js` | Show, dismiss and time notifications; pause during hover/focus; run an optional action safely. No chat or API knowledge. |
 | `static/notifications.css` | Notification layout, controls, positioning and narrow-screen rules. |
-| `static/js/history.js` | Sidebar history, search, menus, deletion and restoration. Supplies Undo to notifications. |
+| `static/js/history.js` | Sidebar history shown a page at a time, search, menus and permanent deletion. |
+| `static/js/storage.js` | Disk use of saved chats and the optional history limits, with confirmation before anything is deleted. |
 | `static/js/projects.js` | Saved project selection, project dialogs and folder browsing. |
 | `static/js/teams.js` | Provider connection status, team configuration, model/effort choices and presets. |
 | `static/js/attachments.js` | Pending image selection, previews, validation, paste/drop and outgoing payloads. |

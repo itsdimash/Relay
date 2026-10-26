@@ -149,7 +149,7 @@ The default team uses Claude as Observer and Reviewer, and Codex as Builder. You
 - **Act on findings.** Select issues and turn them into an editable planning or implementation brief with evidence attached.
 - **Review the result.** Read an overview, priority labels, next actions, file-by-file diffs, new-file previews, and Builder-reported checks.
 - **Recover saved work.** Retry a failed step or explicitly continue interrupted work in the same working copy, preserving completed results and approval records.
-- **Keep local history.** Search chats, reopen reports, or move conversations to recoverable local Trash.
+- **Keep local history.** Search chats, reopen reports, or delete conversations you no longer need. Optional limits keep only the newest chats or cap disk use.
 
 Relay opens with no conversation selected. Saved chats stay in the sidebar until you choose one.
 
@@ -321,11 +321,11 @@ Unlimited settings do not bypass provider quotas, authentication failures, machi
 
 Search saved conversations in the sidebar. On smaller screens, use **History** to open the list. **New task** clears the selected conversation and returns to the brief.
 
-**Delete and restore a chat.** Open a chat's **…** menu and choose **Delete chat**, or use that button in a finished chat's activity panel. Running tasks must be stopped first.
+**Delete a chat.** Open a chat's **…** menu and choose **Delete chat**, or use that button in a finished chat's activity panel. Running tasks must be stopped first.
 
-Relay moves the chat, its attachments, prompts, and logs into local Trash. Your project and its baseline remain intact. **Undo** restores the deleted chat while its notification is visible (ten seconds, paused while hovered or focused); successful restoration feedback disappears after four seconds, and errors remain until dismissed or replaced. This does not erase the CLIs' own histories or permanently remove local data.
+Deleting is immediate and permanent: Relay removes the chat's conversation, attachments, prompts, logs and baseline. There is no Trash and no Undo. Your project folder is never touched, and this does not erase the CLIs' own histories.
 
-To restore an older chat manually, quit Relay, move its folder from `trash/<chat-id>/` back to `runs/<chat-id>/` inside the data folder (see [Where your data lives](#where-your-data-lives)), and reopen Relay.
+**Limit how much history is kept.** Open **Storage** in the sidebar to see how much space saved chats use. You can optionally keep only the newest 25 to 250 chats, or keep history under 1, 2 or 5 GB. Relay shows how many chats a limit would delete and asks before deleting them. Limits are off by default; the newest finished chat and any running task are always kept.
 
 </details>
 
@@ -346,13 +346,14 @@ Set `RELAY_DATA_DIR` to use a different folder. Only one Relay may use a data fo
 | `teams.json` | Saved team presets |
 | `runs/<chat-id>/state.json` | Conversation turns, status, checkpoints, recovery attempts, reports, findings, approval records, checks, and saved change previews |
 | `runs/<chat-id>/attachments/` | Images attached to that chat |
-| `runs/<chat-id>/events.jsonl` | Readable activity log |
+| `runs/<chat-id>/events.jsonl` | Readable activity log (the only copy of the events) |
 | `runs/<chat-id>/provider-events.jsonl` | Captured provider output and diagnostics |
 | `runs/<chat-id>/*.prompt.txt` | Agent instructions and handoffs |
 | `runs/<chat-id>/builder-*.txt` | Builder implementation reports |
 | `runs/<chat-id>/changes.patch` | Complete patch of the build's changes |
 | `baselines/<task-id>.git/` | Private pre-build baselines of edited folders (older tasks used `workspaces/`) |
-| `trash/<chat-id>/` | Recoverable deleted conversations |
+| `runs/<chat-id>/summary.json` | Small record (title, status, dates) read at startup instead of the full state |
+| `retention.json` | Optional history limits (absent when no limit is chosen) |
 
 Relay's combined history is local. The installed tools may save their own sessions, but Relay does not sync a combined conversation into the Claude or Codex desktop apps.
 
@@ -484,7 +485,7 @@ Still stuck? [Open an issue](https://github.com/itsdimash/Relay/issues) with you
 - No automatic recovery, provider-session resumption, or checkpoint migration for legacy tasks.
 - No independent Verifier role or enforced browser visual check for frontend work.
 - No automatic merge, provider quota tracking, or combined spending cap.
-- No incremental history loading, disk quota, or permanent Trash purge interface.
+- History limits are opt-in and apply by chat count or total size, not by age.
 - No hosted multi-user deployment, Windows support, or Intel build of the packaged app.
 - No signed or notarized release, and no automatic updates, yet.
 

@@ -38,7 +38,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({'error': 'Invalid host'}, 403)
         path = urlparse(self.path).path
         if path == '/api/state':
-            return self.respond({'runs': sorted(self.app.states(), key=lambda x: x['created'], reverse=True), 'token': self.app.TOKEN, 'dev': self.app.dev_metadata(), 'queue': self.app.queue_snapshot()})
+            selected = parse_qs(urlparse(self.path).query).get('selected', [''])[0] or None
+            return self.respond({'runs': sorted(self.app.states(selected), key=lambda x: x['created'], reverse=True), 'token': self.app.TOKEN, 'dev': self.app.dev_metadata(), 'queue': self.app.queue_snapshot()})
         if path == '/api/dev':
             metadata = self.app.dev_metadata()
             return self.respond(metadata if metadata else {'error': 'Development mode is disabled'}, 200 if metadata else 404)
@@ -48,7 +49,7 @@ class Handler(BaseHTTPRequestHandler):
                 folder = self.app.history_path(run_id)
                 with self.app.LOCK:
                     run = self.app.RUNS.get(run_id)
-                    info = run.info if isinstance(run, self.app.Run) else run
+                    info = self.app.run_info(run_id)
                     if not info:
                         return self.respond({'error': 'Chat not found.'}, 404)
                     if info['status'] not in TERMINAL or isinstance(run, self.app.Run) and not run.finished.is_set():
@@ -66,8 +67,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 query = parse_qs(urlparse(self.path).query)
                 with self.app.LOCK:
-                    run = self.app.RUNS.get(query.get('run',[''])[0])
-                    info = run.info if isinstance(run,self.app.Run) else run
+                    info = self.app.run_info(query.get('run',[''])[0])
                     if not info:raise ValueError('Chat not found.')
                     image_id = query.get('image',[''])[0]
                     image_path = self.app.saved_image_path(info,image_id)
@@ -79,11 +79,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/notch':
             with self.app.LOCK:
                 infos = [run.info if isinstance(run, self.app.Run) else run for run in self.app.RUNS.values()]
-                data = notch.snapshot(infos)
+                data = notch.snapshot(infos, load=self.app.run_info)
             data['token'] = self.app.TOKEN
             data['queue'] = self.app.queue_snapshot()
             data['limits'] = self.app.limits.snapshot()
             return self.respond(data)
+        if path == '/api/storage':
+            return self.respond(self.app.storage_usage())
         if path == '/api/limits':
             return self.respond(self.app.limits.snapshot())
         if path == '/api/queue':
@@ -113,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'notch-room', 'notch-collaboration', 'notch-activity', 'limits')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'limits')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -167,10 +169,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(self.app.recover_run(payload.get('id'), payload.get('checkpoint_id'), payload.get('minutes'), payload.get('rounds')), 201)
             if path == '/api/teams/save':
                 return self.respond(self.app.save_team_preset(payload.get('team'), payload.get('id')), 201)
+            if path == '/api/storage/policy':
+                return self.respond(self.app.set_retention_policy(payload))
             if path == '/api/history/delete':
                 return self.respond(self.app.delete_history(payload.get('id')))
-            if path == '/api/history/restore':
-                return self.respond(self.app.restore_history(payload.get('id')))
             if path == '/api/projects/save':
                 return self.respond(self.app.save_project(payload.get('name'), payload.get('path')), 201)
             if path == '/api/projects/remove':
@@ -254,6 +256,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('Keep the task under 10,000 characters.')
                     if self.app.SHUTTING_DOWN.is_set():
                         raise ValueError('Relay is shutting down. Restart it before starting a task.')
+                    self.app.enforce_retention(keep=[source['id']] if source else ())
                     run = self.app.Run(task or 'Example: improve email validation', project, rounds, minutes, demo, team, mode, context=context, conversation=conversation, source={'id': source['id'], 'finding_indexes': payload.get('finding_indexes')} if source and not conversation else None, attachments=images, chat=chat, pre_plan=pre_plan, auto=payload.get('auto') is True)
                     self.app.RUNS[run.id] = run
                     self.app.ACTIVE = run

@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import threading
 
-from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, notify, providers, recovery, registry, reports
+from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, notify, providers, recovery, registry, reports, retention
 from . import contracts, task_queue
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
@@ -125,13 +125,21 @@ class Application:
     saved_image_path = attachments.saved_image_path
     inherited_images = attachments.inherited_images
 
-    # Saved conversation loading, snapshots, and recoverable Trash.
+    # Saved conversation loading, snapshots, and permanent deletion.
     report_source = history.report_source
     load_runs = history.load_runs
     history_path = history.history_path
     delete_history = history.delete_history
-    restore_history = history.restore_history
     states = history.states
+    run_info = history.run_info
+    write_state = staticmethod(history.write_state)
+    count_events = staticmethod(history.count_events)
+
+    # Optional limits on how much history is kept.
+    storage_usage = retention.usage
+    retention_policy = retention.read_policy
+    set_retention_policy = retention.set_policy
+    enforce_retention = retention.enforce
 
     # Checkpoint admission and preserved-workspace validation.
     require_recovery_approval = staticmethod(recovery.require_recovery_approval)

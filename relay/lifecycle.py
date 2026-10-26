@@ -73,6 +73,7 @@ def main(app):
         parser.exit(1, str(error) + '\n')
     try:
         app.load_runs()
+        app.enforce_retention()
         server = ThreadingHTTPServer(('127.0.0.1', args.port), app.Handler)
         # Closing the server must never wait for a request thread; a stuck connection once kept the engine alive after quit.
         server.daemon_threads = True

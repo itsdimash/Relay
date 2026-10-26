@@ -42,7 +42,7 @@ class ApplicationTests(unittest.TestCase):
             # Startup and checkpoint rehydration must use the supplied data root.
             reloaded = Application(root, first.DATA)
             reloaded.load_runs()
-            restored = reloaded.Run.recover(reloaded.RUNS[task.id])
+            restored = reloaded.Run.recover(reloaded.run_info(task.id))
             restored.info['summary'] = 'Updated after recovery'
             restored.save()
             saved = json.loads((first.DATA / 'runs' / task.id / 'state.json').read_text())

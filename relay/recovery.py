@@ -74,7 +74,7 @@ def recover_run(app, run_id, checkpoint_id, minutes=None, rounds=None):
             if source.process and source.process.poll() is None: raise ValueError('The previous agent has not exited yet.')
             info = source.info
         else:
-            info = source
+            info = app.run_info(run_id)
         if not info: raise ValueError('Task not found.')
         option = app.recovery_option(info)
         if not option or not option.get('available'): raise ValueError((option or {}).get('reason', 'This task cannot be recovered.'))

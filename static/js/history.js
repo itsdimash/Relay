@@ -22,10 +22,16 @@ export function createHistory({
     today.setDate(today.getDate() - 1);
     return date.toDateString() === today.toDateString() ? 'Yesterday' : 'Earlier';
   }
+  const HISTORY_PAGE = 30;
+  let shownCount = HISTORY_PAGE;
   function renderHistory() {
     const query = $('historySearch').value.trim().toLocaleLowerCase();
     const filtered = appState.runs.filter(run => (run.conversation_title || run.task).toLocaleLowerCase().includes(query));
-    const key = JSON.stringify([filtered.map(run => [run.id, run.status, run.task, run.created, run.demo]), appState.selected, query]);
+    // Long histories show a page at a time; the open chat is always included.
+    const limit = Math.max(shownCount, filtered.findIndex(run => run.id === appState.selected) + 1);
+    const visible = filtered.slice(0, limit);
+    const more = filtered.length - visible.length;
+    const key = JSON.stringify([visible.map(run => [run.id, run.status, run.task, run.created, run.demo]), more, appState.selected, query]);
     if ($('history').dataset.key === key) return;
     closeHistoryMenu(false);
     $('history').dataset.key = key;
@@ -46,7 +52,7 @@ export function createHistory({
       reviewing: 'Reviewing',
       fixing: 'Refining'
     };
-    $('history').innerHTML = filtered.length ? filtered.map(run => {
+    $('history').innerHTML = filtered.length ? visible.map(run => {
       const day = historyDay(run.created),
         heading = day !== group ? `<div class="history-group">${day}</div>` : '';
       group = day;
@@ -58,7 +64,7 @@ export function createHistory({
       }) : '';
       const active = !terminal.has(run.status);
       return `${heading}<div class="history-row ${run.id === appState.selected ? 'is-selected' : ''}"><button class="history-open" data-run="${e(run.id)}" ${run.id === appState.selected ? 'aria-current="true"' : ''} title="${e(conversationTitle(run))}"><span class="history-title">${e(title)}</span><span class="history-meta"><span class="history-status ${active ? 'is-running' : run.status === 'done' ? 'is-complete' : ''}"></span><span>${e(states[run.status] || run.status)}</span>${run.demo ? '<span class="history-demo">Demo</span>' : ''}<time datetime="${e(run.created)}">${e(time)}</time></span></button><button class="history-more" data-history-menu="${e(run.id)}" aria-label="Actions for ${e(title)}" aria-haspopup="menu" aria-expanded="false" title="Conversation actions"><svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div>`;
-    }).join('') : `<div class="history-empty"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4h16v12H9l-5 4z"/></svg><p>${query ? 'No conversations found' : 'No conversations yet'}</p><span>${query ? 'Try a different search.' : 'Your next idea starts here.'}</span></div>`;
+    }).join('') + (more > 0 ? `<button type="button" class="history-show-more" data-history-more>Show ${Math.min(HISTORY_PAGE, more)} more</button>` : '') : `<div class="history-empty"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4h16v12H9l-5 4z"/></svg><p>${query ? 'No conversations found' : 'No conversations yet'}</p><span>${query ? 'Try a different search.' : 'Your next idea starts here.'}</span></div>`;
   }
   function closeHistoryMenu(returnFocus = true) {
     $('historyMenu').hidden = true;
@@ -81,7 +87,7 @@ export function createHistory({
     historyMenuTrigger = trigger;
     $('historyMenuTitle').textContent = conversationTitle(run);
     $('historyMenuDelete').disabled = !terminal.has(run.status);
-    $('historyMenuDelete').title = terminal.has(run.status) ? 'Move chat to local Trash' : 'Stop the running task before deleting its history';
+    $('historyMenuDelete').title = terminal.has(run.status) ? 'Delete chat permanently' : 'Stop the running task before deleting its history';
     const rect = trigger.getBoundingClientRect();
     $('historyMenu').style.left = Math.max(12, Math.min(rect.right - 216, window.innerWidth - 228)) + 'px';
     $('historyMenu').style.top = Math.max(12, Math.min(rect.bottom + 5, window.innerHeight - 170)) + 'px';
@@ -97,30 +103,16 @@ export function createHistory({
     $('deleteDialog').showModal();
     $('cancelDelete').focus();
   }
-  async function restoreChat(id) {
-    try {
-      const restored = await request('/api/history/restore', {
-        id
-      });
-      const snapshot = await request('/api/state');
-      appState.runs = snapshot.runs;
-      appState.selected = restored.id;
-      appState.rendered = '';
-      notifications.show('Chat restored.');
-      render();
-    } catch (error) {
-      notifications.show(error.message, {
-        duration: 0,
-        actionLabel: 'Retry',
-        onAction: () => restoreChat(id)
-      });
-    }
-  }
   function init() {
     $('history').addEventListener('click', event => {
       const more = event.target.closest('[data-history-menu]');
       if (more) {
         openHistoryMenu(more.dataset.historyMenu, more);
+        return;
+      }
+      if (event.target.closest('[data-history-more]')) {
+        shownCount += HISTORY_PAGE;
+        renderHistory();
         return;
       }
       const button = event.target.closest('[data-run]');
@@ -131,7 +123,10 @@ export function createHistory({
         render();
       }
     });
-    $('historySearch').addEventListener('input', renderHistory);
+    $('historySearch').addEventListener('input', () => {
+      shownCount = HISTORY_PAGE;
+      renderHistory();
+    });
     $('historyToggle').addEventListener('click', () => {
       const open = document.querySelector('.sidebar').classList.toggle('history-visible');
       $('historyToggle').setAttribute('aria-expanded', String(open));
@@ -203,11 +198,7 @@ export function createHistory({
         if (appState.selected === id) appState.selected = null;
         appState.rendered = '';
         $('deleteDialog').close();
-        notifications.show(result.message, {
-          actionLabel: 'Undo',
-          onAction: () => restoreChat(id),
-          duration: 10000
-        });
+        notifications.show(result.message);
         render();
       } catch (error) {
         $('deleteDialog').close();

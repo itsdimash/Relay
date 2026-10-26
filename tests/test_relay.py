@@ -136,10 +136,10 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(len(source['turns']),2)
             self.assertEqual(s.source_findings(source)[0]['id'],'R1')
             s.load_runs()
-            self.assertEqual(s.RUNS[root.id]['turns'][0]['summary'],'Original report with evidence')
+            self.assertEqual(s.run_info(root.id)['turns'][0]['summary'],'Original report with evidence')
             s.delete_history(root.id)
-            s.restore_history(root.id)
-            self.assertEqual(len(s.RUNS[root.id]['turns']),2)
+            self.assertNotIn(root.id,s.RUNS)
+            self.assertFalse((s.DATA/'runs'/root.id).exists())
 
     def test_selected_findings_context_is_validated_and_limited(self):
         source=dict(task='Original',summary='Report',findings=[dict(id='R1',problem='One'),dict(id='R2',problem='Two')])
@@ -827,14 +827,22 @@ class HistoryTests(unittest.TestCase):
         s.RUNS[self.id]=self.info
     def tearDown(self):
         self.registry.stop();s.DATA=self.old_data;self.temp.cleanup()
-    def test_delete_restore_preserves_code_and_logs(self):
+    def test_delete_is_permanent_and_keeps_project_files(self):
+        baseline=s.DATA/'baselines'/(self.id+'.git');baseline.mkdir(parents=True);(baseline/'HEAD').write_text('x')
         s.delete_history(self.id)
         self.assertNotIn(self.id,s.RUNS)
         self.assertFalse(self.folder.exists())
-        self.assertEqual((s.DATA/'trash'/self.id/'events.jsonl').read_text(),'private messages')
+        self.assertFalse(baseline.exists())
+        self.assertFalse((s.DATA/'trash').exists())
+        self.assertFalse((s.DATA/'deleting'/self.id).exists())
         self.assertEqual((self.workspace/'code.txt').read_text(),'preserve changes')
-        s.restore_history(self.id)
-        self.assertIn(self.id,s.RUNS);self.assertTrue(self.folder.exists())
+    def test_start_removes_leftover_trash_and_half_finished_deletions(self):
+        for leftover in ('trash','deleting'):
+            (s.DATA/leftover/'0123456789ab').mkdir(parents=True)
+        s.load_runs()
+        self.assertFalse((s.DATA/'trash').exists())
+        self.assertFalse((s.DATA/'deleting').exists())
+        self.assertIn(self.id,s.RUNS)
     def test_deleted_chat_stays_hidden_after_restart(self):
         s.delete_history(self.id);s.load_runs()
         self.assertNotIn(self.id,s.RUNS)
@@ -847,9 +855,8 @@ class HistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'finishing'):s.delete_history(run.id)
         run.finished.set();s.delete_history(run.id)
         self.assertNotIn(run.id,s.RUNS)
-    def test_invalid_ids_and_restore_collision(self):
+    def test_invalid_ids_are_rejected(self):
         with self.assertRaises(ValueError):s.delete_history('../runs')
-        with self.assertRaises(ValueError):s.restore_history(self.id)
         self.assertTrue(self.folder.exists())
 
 
@@ -1084,8 +1091,6 @@ class HTTPTests(unittest.TestCase):
             s.delete_history(run.id)
             with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(url)
             self.assertEqual(error.exception.code,404)
-            s.restore_history(run.id)
-            with urllib.request.urlopen(url) as response:self.assertEqual(response.read(),PNG_BYTES)
             bad=f'http://127.0.0.1:{self.port}/api/image?run={run.id}&image=../private'
             with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(bad)
             self.assertEqual(error.exception.code,404)
