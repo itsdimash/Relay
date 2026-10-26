@@ -9,7 +9,8 @@
     <a href="#how-it-works">How it works</a> ·
     <a href="#your-first-task">First task</a> ·
     <a href="#privacy-and-security">Privacy</a> ·
-    <a href="#troubleshooting">Troubleshooting</a>
+    <a href="#troubleshooting">Troubleshooting</a> ·
+    <a href="https://relay-tau-eight.vercel.app/">Website</a>
   </p>
 
   <p>
@@ -172,7 +173,7 @@ Relay opens with no conversation selected. Saved chats stay in the sidebar until
 | --- | --- | --- | --- |
 | **Observe only** | Observer inspects and reports current behavior, risks, and findings | Disabled | Any existing folder |
 | **Plan only** | Observer proposes steps, affected files, risks, and verification criteria | Disabled | Any existing folder |
-| **Build & review** | Observer → clarification if needed → your approval → Builder → Reviewer → fix/review rounds as needed | Builder only, after approval | Clean Git repository with at least one commit, selected at its root |
+| **Build & review** | Observer → clarification if needed → your approval → Builder → Reviewer → fix/review rounds as needed | Builder only, after approval | Any project folder (Git is optional) |
 
 Read-only modes inspect your selected folder directly. They can see staged, unstaged, and untracked files without requiring a commit or stash, and they do not treat those existing edits as changes made by an agent.
 
@@ -251,7 +252,7 @@ Older reports remain readable. Missing priority ratings are labeled **Unrated** 
 
 **Build this plan.** After a Plan-only report, **Build this plan** runs the full Build & review pipeline in the same chat (choosing it is the plan approval, so no second planning pass runs, and the Reviewer checks the result). The plan that gets built is the latest plan plus every question and answer from the chat after it, listed under **Changes and decisions agreed in the conversation after this plan**; those take precedence where they conflict. The Approve step shows exactly that text. The Review findings buttons prefill the chat box instead of starting a new chat. Each build keeps its own patch; earlier patches are saved next to the latest as `changes-before-turn-N.patch`.
 
-**Turn findings into a task.** Open **Review findings**, select the issues to address, then choose **Plan selected** or **Build & review selected**. Relay opens an editable draft with the original project, team, selected evidence, and image references. Review it before pressing Start. A build still requires a clean repository and waits for plan approval. Changing the project or choosing **Clear** removes the attached finding context.
+**Turn findings into a task.** Open **Review findings**, select the issues to address, then choose **Plan selected** or **Build & review selected**. Relay opens an editable draft with the original project, team, selected evidence, and image references. Review it before pressing Start. A build waits for plan approval (or Auto mode approves it). Changing the project or choosing **Clear** removes the attached finding context.
 
 </details>
 
