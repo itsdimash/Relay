@@ -282,11 +282,28 @@ label { font-weight: 600; font-size: 14px; color: var(--ink); }
 .working-dots { display: inline-flex; gap: 6px; align-items: center; }
 .working-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); opacity: .45; }
 .working-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--brand), transparent) no-repeat; background-size: 40% 100%; }
-.auto-mode { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
-.auto-mode:has(input:checked) { border-color: var(--brand); background: var(--brand-tint); }
-.auto-mode input { flex: none; width: 18px; height: 18px; min-height: 18px; margin: 2px 0 0; accent-color: var(--brand); }
-.auto-mode strong { display: block; color: var(--ink); font-size: 13px; }
-.auto-mode small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+/* How much the agents decide on their own: a small control inside the text zone, with a menu that opens upward. */
+.composer-box { position: relative; }
+.composer-box textarea { padding-bottom: 54px; }
+.mode-picker { z-index: 5; }
+.mode-trigger { position: absolute; right: 18px; bottom: 10px; display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 6px 12px 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, #fff); color: var(--ink); font-size: 13px; font-weight: 550; cursor: pointer; }
+.mode-trigger:hover { border-color: #cdd6d0; background: #f6f8f7; }
+.mode-trigger:focus-visible, .mode-item:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.mode-trigger[data-on="1"] { border-color: var(--brand); background: var(--brand-tint); color: var(--brand); }
+.mode-trigger .mode-icon { width: 18px; height: 18px; }
+.mode-chevron { transform: rotate(180deg); transition: transform .15s ease; }
+.mode-trigger[aria-expanded="true"] .mode-chevron { transform: none; }
+.mode-menu { position: absolute; right: 10px; bottom: 56px; width: min(340px, calc(100% - 20px)); padding: 6px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface, #fff); box-shadow: 0 14px 40px rgba(13, 19, 33, .16); }
+.mode-menu[hidden] { display: none; }
+.mode-item { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.mode-item:hover { background: #f1f4f2; }
+.mode-item .mode-icon { flex: none; margin-top: 1px; color: var(--muted); }
+.mode-item > span { flex: 1; min-width: 0; }
+.mode-item strong { display: block; font-size: 14px; }
+.mode-item small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.mode-item .mode-check { flex: none; margin-top: 2px; color: var(--brand); visibility: hidden; }
+.mode-item[aria-checked="true"] .mode-check { visibility: visible; }
+.mode-item[aria-checked="true"] .mode-icon { color: var(--brand); }
 .chat-changes { margin-top: 12px; color: var(--muted); font-size: 12px; }
 .chat-changes .secondary { margin-left: 8px; min-height: 32px; padding: 4px 12px; }
 .plan-next { display: flex; gap: 20px; align-items: center; justify-content: space-between; margin: 8px 0 24px 44px; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--brand-tint); }

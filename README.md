@@ -76,7 +76,7 @@ The app checks this repository's latest GitHub Release when it opens. When a new
 
 ### Notch panel
 
-Move the pointer to the notch and a small dark panel grows out of it, with icon tabs on both sides of the notch: **Music**, **Notes**, **Deliver** and **Task**. Each tab is its own view. It also opens by itself when a plan or questions need you, and briefly when a task finishes.
+Move the pointer to the notch and a small dark panel grows out of it, with icon tabs on both sides of the notch: **Music**, **Notes**, **Deliver** and **Task**. Each tab is its own view. It also opens by itself when a plan or questions need you, and briefly when a task finishes. The **Task** tab keeps showing a finished task for 5 minutes, then goes back to "Relay is idle" (the full history stays in the dashboard).
 
 - **Double-tap the right Command key** (⌘) opens the **full panel** in any app and keeps it open. It adds a fourth tab, **Office**: the pixel-art room where the Observer, Builder and Reviewer pass work to each other. The room only appears here. Double-tap again, press Escape, or choose **View → Show or Hide Notch Panel** to close it. A Command shortcut such as ⌘C does not count.
 - **Task:** the step of the task, the latest agent message, and **Approve** / **Reject** when a plan is waiting. A waiting plan opens the full panel and always switches back to the Task view, so you never miss an approval.

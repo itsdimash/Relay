@@ -107,9 +107,52 @@ export function createTasks({
       updateButtons();
     }
   }
+  /** The "Ask first / Auto" control in the text zone. The hidden checkbox stays the single source of truth. */
+  function initAutoPicker() {
+    const trigger = $('autoTrigger'), menu = $('autoMenu'), items = [...menu.querySelectorAll('[data-auto]')];
+    const show = () => {
+      const on = $('autoMode').checked;
+      $('autoLabel').textContent = on ? 'Auto' : 'Ask first';
+      trigger.dataset.on = on ? '1' : '0';
+      trigger.querySelector('.mode-icon').innerHTML = items[on ? 1 : 0].querySelector('.mode-icon').innerHTML;
+      for (const item of items) item.setAttribute('aria-checked', String((item.dataset.auto === '1') === on));
+    };
+    const close = focus => {
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      if (focus) trigger.focus();
+    };
+    trigger.addEventListener('click', () => {
+      const open = menu.hidden;
+      menu.hidden = !open;
+      trigger.setAttribute('aria-expanded', String(open));
+      if (open) menu.querySelector('[aria-checked="true"]').focus();
+    });
+    for (const item of items) item.addEventListener('click', () => {
+      $('autoMode').checked = item.dataset.auto === '1';
+      $('autoMode').dispatchEvent(new Event('change'));
+      show();
+      close(true);
+    });
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close(true);
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const at = items.indexOf(document.activeElement);
+        items[(at + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+      }
+    });
+    document.addEventListener('click', event => {
+      if (!menu.hidden && !$('autoSetting').contains(event.target)) close(false);
+    });
+    show();
+  }
   function init() {
     try { $('autoMode').checked = localStorage.getItem('relay.auto') === '1'; } catch (_) {}
     $('autoMode').addEventListener('change', () => { try { localStorage.setItem('relay.auto', $('autoMode').checked ? '1' : '0'); } catch (_) {} });
+    initAutoPicker();
     $('taskMode').addEventListener('change', updateTaskMode);
     $('taskForm').addEventListener('submit', event => {
       event.preventDefault();

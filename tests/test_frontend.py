@@ -46,6 +46,8 @@ class RunHistoryInterfaceTests(unittest.TestCase):
         index = (root / 'static/index.html').read_text()
         self.assertIn('Talk to your agent', index)
         self.assertIn('id="autoMode"', index)
+        self.assertIn('id="autoTrigger"', index)
+        self.assertIn('role="menuitemradio"', index)
         self.assertIn("auto: $('autoMode').checked && $('taskMode').value !== 'observe'", tasks)
         self.assertNotIn('followupAction', index)
         self.assertIn('data-open-changes', conversation)
