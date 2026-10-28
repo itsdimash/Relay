@@ -377,7 +377,7 @@ class WiringTests(unittest.TestCase):
             self.assertIn(element, html)
         self.assertIn('const picked = pendingDue()', self.NOTCH)           # a picked time wins over the words
         self.assertIn('pending = null;', self.NOTCH)                       # and is forgotten once the note is saved
-        self.assertIn('setRemind(false);\n  applyTabs()', self.NOTCH)       # a freshly shown panel starts with it closed
+        self.assertIn('setRemind(false);\n  if (ask.resizing)', self.NOTCH)       # a freshly shown panel starts with it closed
         self.assertIn("event.key !== 'Escape'", self.NOTCH)
         self.assertIn('overflow: clip', (STATIC / 'notch.css').read_text())  # focus can no longer slide the page sideways
 

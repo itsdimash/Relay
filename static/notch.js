@@ -5,6 +5,9 @@ import { createCollaboration } from './js/notch-collaboration.js';
 import { createActivity } from './js/notch-activity.js';
 import { createMusicFx, STYLES, DEFAULT_STYLE, isStyle } from './js/notch-music-fx.js';
 import { createBatteryWatcher } from './js/notch-battery.js';
+import { VOICE_KEY, LANGUAGE_KEY, speechLocale, otherLanguage, languageCode, joinSpeech, spokenCommand, voiceProblem } from './js/notch-voice.js';
+import { SPEAK_KEY, speakMode, shouldSpeak, languageOf, lineForRun, lineForReminder, remember } from './js/notch-speech.js';
+import { routeCommand, VIEW_NAMES, briefFor, pickProject, teamFor, fitMode, typedText } from './js/notch-commands.js';
 import { parseReminder, dueLabel, createReminderWatcher, quickChoices, startingMoment, stepMoment, canSet, dayLabel, hourText, minuteText } from './js/notch-reminders.js';
 
 const $ = id => document.getElementById(id);
@@ -23,7 +26,7 @@ const openRun = destination => {
   else window.open('/#' + new URLSearchParams({ run: destination.runId, tab: destination.tab, step: destination.step }), '_blank', 'noopener');
 };
 const collaboration = createCollaboration({ reducedMotion, openRun });
-const activity = createActivity({post, openRun});
+const activity = createActivity({ post: postTracked, openRun });
 
 // Music animation (drawn by js/notch-music-fx.js): behind the Music view, beside its title, and in the track-change pill.
 // "Customize" (or the animation next to the title) opens a small picker with two tabs: the animation in the panel, and, in
@@ -228,6 +231,10 @@ let noteBusy = false;
 let shownNotes = null; // ids of the notes drawn last time (null before the first draw, so the first list does not animate)
 let inputFocused = false;
 let holding = false;
+const voice = { on: false, latched: false, base: '', pressedAt: 0 }; // the microphone: on while it is listening
+const ask = { open: false, mode: 'build', agent: '', team: null, busy: false, resizing: false }; // a spoken request for the agents, waiting for a yes
+const typing = { open: false, app: '' };   // spoken words to type into another app, waiting for a yes
+let openingApp = null;                      // the app that was asked for, in case no app has that name
 let music = null;
 let musicArt = '';
 let musicTrack = '';
@@ -431,6 +438,7 @@ const batteryWatcher = createBatteryWatcher({
 const reminderWatcher = createReminderWatcher({
   announce: message => {
     toast(message.kind, message.title, message.detail);
+    if (speechMode() === 'all') speak(lineForReminder(message, translated));
     if (current?.plan) tell({ type: 'attention', keep: true }); // a plan waiting for an answer needs the big panel anyway
     else tell({ type: 'reminder' });                           // otherwise the small panel opens on the Notes for a while
     loadNotes();
@@ -482,6 +490,7 @@ function announce(run) {
   if (run.status === announced.status) return;
   const previous = announced.status;
   announced.status = run.status;
+  speakRun(run);
   if (run.status === 'awaiting_approval') toast('approve', 'Needs your approval', 'Nothing is edited until you approve.');
   else if (run.status === 'awaiting_clarification') toast('question', 'Needs your answers', 'The Observer has a few questions.');
   else if (previous === 'awaiting_approval' && ['building', 'preparing'].includes(run.status)) {
@@ -575,7 +584,7 @@ function setView(next, { focus = true } = {}) {
 
 // While the person is typing, the panel must not close because the pointer moved away.
 function syncHold() {
-  const want = view === 'notes' && inputFocused;
+  const want = (view === 'notes' && inputFocused) || voice.on || (ask.open && view === 'task') || (typing.open && view === 'notes');
   if (want === holding) return;
   holding = want;
   tell({ type: 'hold', on: want });
@@ -714,9 +723,14 @@ function pickTab(name) {
     return;
   }
   // Only the Office, and a plan waiting for an answer, need the big panel; every other view goes back to the small one.
-  const needsRoom = name === 'office' || (name === 'task' && !!current?.plan);
+  if (name !== 'task') closeAsk(false);
+  if (name !== 'notes') closeType();
+  const needsRoom = name === 'office' || (name === 'task' && (!!current?.plan || ask.open));
   if (mode === 'full' && !needsRoom) tell({ type: 'shrink' });
-  if (mode === 'compact' && needsRoom) tell({ type: 'expand' });
+  if (mode === 'compact' && needsRoom) {
+    if (ask.open) ask.resizing = true; // the card is too wide for the small panel (and Russian is wider still): a wider one it is
+    tell(ask.open && !current?.plan ? { type: 'expand', card: true } : { type: 'expand' }); // wide, but only as tall as the card
+  }
   setView(name);
 }
 
@@ -801,6 +815,379 @@ $('noteHint').addEventListener('click', () => {
   showNoteHint();
   $('noteInput').focus({ preventScroll: true });
 });
+
+// Voice: the microphone button (hold to talk, or tap to start and tap again to stop) and the right Option key, which the app
+// watches everywhere. The app listens and sends the words; they go into the field after whatever was typed. Nothing is
+// saved until you press Enter, unless you end with "save" (or "save as to-do").
+const readStored = key => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+const voiceEnabled = () => !!native && readStored(VOICE_KEY) !== 'off';
+const voiceLocale = () => speechLocale(readStored(LANGUAGE_KEY), window.relayI18n?.language);
+function paintVoice() {
+  $('micButton').hidden = !voiceEnabled();
+  $('voiceLang').hidden = !voiceEnabled();
+  $('voiceLang').textContent = languageCode(voiceLocale());
+  $('micButton').setAttribute('aria-pressed', String(voice.on));
+  const composer = document.querySelector('.composer');
+  composer.toggleAttribute('data-listening', voice.on);
+  $('noteInput').placeholder = voice.on ? 'Listening…' : 'Write a note…';
+}
+function startVoice() {
+  if (voice.on || !voiceEnabled()) return;
+  stopSpeaking(); // the microphone must not hear the answer
+  voice.on = true;
+  voice.latched = false;
+  voice.base = $('noteInput').value;
+  $('noteError').textContent = '';
+  paintVoice();
+  syncHold();
+  tell({ type: 'dictate', action: 'start', locale: voiceLocale() });
+}
+function stopVoice() {
+  if (voice.on) tell({ type: 'dictate', action: 'stop' }); // the words arrive in a moment, with "done"
+}
+function cancelVoice() {
+  if (!voice.on) return;
+  tell({ type: 'dictate', action: 'cancel' });
+  endVoice(voice.base);
+}
+function endVoice(text) {
+  voice.on = false;
+  voice.latched = false;
+  if (typeof text === 'string') $('noteInput').value = text;
+  paintVoice();
+  syncHold();
+  showNoteHint();
+}
+window.relayDictation = (state, text, error) => {
+  if (!voice.on) return;
+  if (state === 'text') {
+    $('noteInput').value = joinSpeech(voice.base, text);
+    showNoteHint();
+  } else if (state === 'done') {
+    const spoken = joinSpeech(voice.base, text);
+    const command = voice.base.trim() ? null : routeCommand(spoken); // a command counts only when the field was empty
+    if (command) {
+      endVoice('');
+      runCommand(command);
+      return;
+    }
+    const heard = spokenCommand(spoken);
+    endVoice(heard.text);
+    $('noteInput').focus({ preventScroll: true });
+    if (heard.save && heard.text) addNote(heard.save);
+  } else if (state === 'cancelled') {
+    endVoice(voice.base);
+  } else if (state === 'error') {
+    endVoice(voice.base);
+    $('noteError').textContent = voiceProblem(error);
+  }
+};
+// The app saw the right Option key held down (or let go).
+window.relayVoiceKey = down => {
+  if (down) {
+    if (!voiceEnabled() || !shown('notes') || current?.plan) return;
+    setView('notes', { focus: false });
+    startVoice();
+  } else if (!voice.latched) {
+    stopVoice();
+  }
+};
+$('micButton').addEventListener('pointerdown', event => {
+  if (event.button !== 0) return;
+  if (voice.on && voice.latched) {
+    stopVoice();
+    return;
+  }
+  voice.pressedAt = Date.now();
+  startVoice();
+});
+const releaseMic = () => {
+  if (!voice.on || voice.latched || !voice.pressedAt) return;
+  if (Date.now() - voice.pressedAt < 300) voice.latched = true; // a tap: keep listening until the next tap
+  else stopVoice();                                           // a hold: let go to finish
+  voice.pressedAt = 0;
+};
+$('micButton').addEventListener('pointerup', releaseMic);
+$('micButton').addEventListener('pointercancel', releaseMic);
+$('micButton').addEventListener('mousedown', event => event.preventDefault());
+$('voiceLang').addEventListener('click', () => {
+  try { localStorage.setItem(LANGUAGE_KEY, otherLanguage(voiceLocale())); } catch (_) { /* the choice lasts until the panel is closed */ }
+  paintVoice();
+});
+$('voiceLang').addEventListener('mousedown', event => event.preventDefault());
+window.addEventListener('storage', event => { if (event.key === VOICE_KEY || event.key === LANGUAGE_KEY) paintVoice(); });
+window.addEventListener('relaylangchange', paintVoice);
+// Escape while listening throws the words away (a second Escape hides the panel).
+document.addEventListener('keydown', event => {
+  if (!voice.on || event.key !== 'Escape') return;
+  event.stopPropagation();
+  cancelVoice();
+}, true);
+paintVoice();
+
+// Answers said out loud. The Mac app speaks. A task that was asked for by voice says what became of it (its result, a plan that
+// waits for approval, a question, a failure); "everything" in the window's Notch menu adds tasks started by hand and
+// reminders. Escape, the Stop button, or starting to talk silences it.
+const BRIEFS_KEY = 'relay.spokenBriefs'; // queued tasks that came from a spoken request
+const RUNS_KEY = 'relay.spokenRuns';     // the runs they became
+const storedList = key => { try { const list = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(list) ? list : []; } catch (_) { return []; } };
+const saveList = (key, list) => { try { localStorage.setItem(key, JSON.stringify(list)); } catch (_) { /* then the answer is simply not spoken */ } };
+const speaking = { on: false };
+const speechMode = () => speakMode(readStored(SPEAK_KEY));
+const translated = text => (window.relayI18n?.translate ? window.relayI18n.translate(text) : text);
+function speak(text) {
+  const words = String(text || '').trim();
+  if (native && words) tell({ type: 'speak', text: words, locale: languageOf(words) });
+}
+function stopSpeaking() {
+  if (speaking.on) tell({ type: 'speak', action: 'stop' });
+}
+function speakRun(run) {
+  if (!shouldSpeak(speechMode(), storedList(RUNS_KEY).includes(run.id))) return;
+  const line = lineForRun(run, translated);
+  if (line) speak(line);
+}
+// A queued task that is started from the notch: when it was a spoken one, the run it becomes is remembered.
+async function postTracked(path, body) {
+  const result = await post(path, body);
+  if (path === '/api/queue/start' && result?.id && storedList(BRIEFS_KEY).includes(body?.id)) saveList(RUNS_KEY, remember(storedList(RUNS_KEY), result.id));
+  return result;
+}
+window.relaySpeech = state => {
+  speaking.on = state === 'start';
+  $('speakStop').hidden = !speaking.on;
+  if (state === 'unavailable') say('This Mac has no voice installed for that language.');
+};
+$('speakStop').addEventListener('click', stopSpeaking);
+$('speakStop').addEventListener('mousedown', event => event.preventDefault());
+document.addEventListener('keydown', event => {
+  if (!speaking.on || event.key !== 'Escape') return;
+  event.stopPropagation();
+  stopSpeaking();
+}, true);
+
+// What was said can also be a command: "open music", "next song", "to-do buy milk". A request for the agents is not carried
+// out at once: it opens a small card to check the words, the kind of work and the project, and then goes to the queue.
+let sayTimer = 0;
+function say(text) {
+  $('voiceNote').textContent = text;
+  clearTimeout(sayTimer);
+  if (text) sayTimer = setTimeout(() => { $('voiceNote').textContent = ''; }, 4500);
+}
+const PROJECT_KEY = 'relay.voiceProject';
+function runCommand(command) {
+  say('');
+  if (command.kind === 'view') {
+    if (!shown(command.view)) say('That tab is turned off in the Relay window.');
+    else pickTab(command.view);
+  } else if (command.kind === 'media') {
+    if (!native) say('Music controls work in the Relay app.');
+    else if (!music) say('Nothing is playing.');
+    else {
+      const playing = !!music.playing;
+      const wanted = command.command;
+      if (wanted === 'next' || wanted === 'previous') tell({ type: 'media', command: wanted });
+      else if ((wanted === 'pause') === playing) tell({ type: 'media', command: 'toggle' }); // already as asked: nothing to press
+      say({ pause: 'Paused.', play: 'Playing.', next: 'Next song.', previous: 'Previous song.' }[wanted]);
+    }
+  } else if (command.kind === 'todo') {
+    $('noteInput').value = command.text;
+    showNoteHint();
+    addNote('todo');
+  } else if (command.kind === 'agents') {
+    openAsk(command);
+    pickTab('task'); // everything about the agents lives on the Task page, not in the notes
+  } else if (command.kind === 'app') {
+    if (!native) say('Opening apps works in the Relay app.');
+    else {
+      openingApp = command; // if no app has that name, the words were only a note
+      tell({ type: 'app', names: command.names });
+    }
+  } else if (command.kind === 'telegram') {
+    if (!native) say('Telegram drafts work in the Relay app.');
+    else {
+      tell({ type: 'telegram', text: command.text });
+      say('Opening Telegram…');
+    }
+  } else if (command.kind === 'type') {
+    if (!native) say('Typing into other apps works in the Relay app.');
+    else openType(command.text);
+  }
+}
+// "type hello" shows the words and the app they would land in, and waits for a press. Nothing is typed before that, a Return is
+// never pressed, and a cancel puts the words back into the note field.
+function paintType() {
+  const known = !!typing.app;
+  $('typeTarget').textContent = known ? `Type into ${typing.app}` : 'No app to type into. Switch to one first.';
+  $('typeTarget').toggleAttribute('data-none', !known);
+  $('typeGo').disabled = !known || !typedText($('typeText').value);
+}
+function openType(text) {
+  typing.open = true;
+  typing.app = '';
+  $('typeText').value = text;
+  $('typeCard').hidden = false;
+  paintType();
+  syncHold();
+  tell({ type: 'front' }); // which app is it? the answer comes back in relayAction
+  $('typeText').focus({ preventScroll: true });
+}
+function closeType(keepWords = false) {
+  if (!typing.open) return;
+  typing.open = false;
+  $('typeCard').hidden = true;
+  if (keepWords && !$('noteInput').value.trim()) {
+    $('noteInput').value = $('typeText').value;
+    showNoteHint();
+  }
+  syncHold();
+}
+function sendType() {
+  const text = typedText($('typeText').value);
+  if (!typing.open || !typing.app || !text) return;
+  closeType();
+  tell({ type: 'type', text });
+}
+$('typeGo').addEventListener('click', sendType);
+$('typeCancel').addEventListener('click', () => closeType(true));
+$('typeText').addEventListener('input', paintType);
+$('typeText').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); sendType(); }
+});
+document.addEventListener('keydown', event => {
+  if (!typing.open || event.key !== 'Escape') return;
+  event.stopPropagation();
+  closeType(true);
+}, true);
+for (const element of [$('typeGo'), $('typeCancel')]) element.addEventListener('mousedown', event => event.preventDefault());
+// What the app answered about opening an app, typing, or a Telegram draft.
+window.relayAction = (kind, state, detail) => {
+  if (kind === 'front') {
+    typing.app = state === 'ok' ? String(detail || '') : '';
+    paintType();
+  } else if (kind === 'app') {
+    if (state === 'missing' && openingApp) {
+      $('noteInput').value = openingApp.spoken; // no app has that name: it was only something to write down
+      showNoteHint();
+      say('No app has that name. Your words are in the note field.');
+    } else if (state === 'failed') {
+      say('That app could not be opened.');
+    }
+    openingApp = null;
+  } else if (kind === 'telegram') {
+    if (state === 'opened') say('Telegram is open. The words are on your clipboard: choose a chat and press ⌘V.');
+    else if (state === 'missing') say('Telegram is not installed on this Mac.');
+    else if (state === 'failed') say('Telegram could not be opened.');
+  } else if (kind === 'type') {
+    if (state === 'access') say('Allow Relay under Privacy & Security, Accessibility, then try again.');
+    else if (state === 'gone') say('That app was closed.');
+    else if (state === 'changed') say('Another app came to the front. Switch back and try again.');
+    else if (state === 'failed') say('Nothing was typed.');
+  }
+};
+// What the person asked for by name, in a sentence. The observer and the reviewer only look; only the builder changes files.
+const WHO_LINES = {
+  observer: 'The Observer only looks and plans. Nothing is changed.',
+  reviewer: 'The Reviewer looks with its own tool and model. Nothing is changed.',
+  builder: 'The Builder changes the files, after you approve the plan.',
+  builderLooks: 'The Builder answers with its own tool and model. Nothing is changed.',
+  claude: 'Claude takes the lead in this task.',
+  codex: 'Codex takes the lead in this task.'
+};
+function paintAsk() {
+  ask.mode = fitMode(ask.agent, ask.mode);
+  for (const button of $('askModes').children) {
+    button.setAttribute('aria-checked', String(button.dataset.mode === ask.mode));
+    button.disabled = button.dataset.mode === 'build' && (ask.agent === 'observer' || ask.agent === 'reviewer'); // they cannot change files
+  }
+  $('askAgent').value = ask.agent;
+  $('askAgent').toggleAttribute('data-named', !!ask.agent);
+  const line = ask.agent === 'builder' && ask.mode !== 'build' ? WHO_LINES.builderLooks : WHO_LINES[ask.agent] || '';
+  $('askWho').hidden = !line;
+  $('askWho').textContent = line;
+}
+function askNote(text, error = false) {
+  $('askNote').textContent = text;
+  $('askNote').toggleAttribute('data-error', error);
+}
+async function openAsk({ text, mode, agent }) {
+  ask.open = true;
+  ask.agent = agent || '';
+  ask.mode = mode;
+  ask.team = null;
+  ask.busy = false;
+  $('askTask').value = text;
+  $('askQueue').disabled = true;
+  $('askCard').hidden = false;
+  $('askCard').parentElement.toggleAttribute('data-asking', true);
+  askNote('It waits in the queue until you press Start task.');
+  paintAsk();
+  syncHold();
+  fetch('/api/teams', { cache: 'no-store' }).then(r => r.json()).then(data => { ask.team = data?.default?.roles ? data.default : null; }).catch(() => {});
+  try {
+    const data = await fetch('/api/projects', { cache: 'no-store' }).then(r => r.json());
+    const projects = Array.isArray(data.projects) ? data.projects.filter(project => project.exists !== false) : [];
+    const chosen = pickProject(projects, readStored(PROJECT_KEY));
+    $('askProject').replaceChildren(...projects.map(project => {
+      const option = document.createElement('option');
+      option.value = project.path;
+      option.textContent = project.name || project.path.split('/').filter(Boolean).pop();
+      return option;
+    }));
+    if (chosen) $('askProject').value = chosen.path;
+    $('askProject').hidden = !projects.length;
+    if (!projects.length) askNote('Save a project in the Relay window first, then try again.', true);
+    $('askQueue').disabled = !projects.length;
+  } catch (_) {
+    askNote('Relay is not responding.', true);
+  }
+  if (ask.open) $('askTask').focus({ preventScroll: true });
+}
+function closeAsk(shrink = true) {
+  if (!ask.open) return;
+  ask.open = false;
+  $('askCard').hidden = true;
+  $('askCard').parentElement.removeAttribute('data-asking');
+  syncHold();
+  if (shrink && mode === 'full' && view === 'task' && !current?.plan) { // back to the small panel
+    ask.resizing = true;
+    tell({ type: 'shrink' });
+  }
+}
+async function queueAsk() {
+  const task = $('askTask').value.trim();
+  const project = $('askProject').value;
+  if (!ask.open || ask.busy || !task || !project) return;
+  ask.busy = true;
+  $('askQueue').disabled = true;
+  try {
+    if (ask.agent && !ask.team) throw new Error('Relay could not read the team. Try again.'); // never send it to the wrong agent
+    const mode = fitMode(ask.agent, ask.mode);
+    const result = await post('/api/queue/add', briefFor(task, project, mode, teamFor(ask.team, ask.agent, mode)));
+    try { localStorage.setItem(PROJECT_KEY, project); } catch (_) { /* the choice lasts until the panel is closed */ }
+    saveList(BRIEFS_KEY, remember(storedList(BRIEFS_KEY), result.items?.at(-1)?.id)); // so its answer is spoken
+    activity.update(result, current); // the queue (the engine answers with it), and its Start button, are on this page
+    closeAsk();
+  } catch (error) {
+    askNote(error.message, true);
+    $('askQueue').disabled = false;
+  } finally {
+    ask.busy = false;
+  }
+}
+for (const button of $('askModes').children) button.addEventListener('click', () => { ask.mode = button.dataset.mode; paintAsk(); });
+$('askAgent').addEventListener('change', () => { ask.agent = $('askAgent').value; paintAsk(); });
+$('askQueue').addEventListener('click', queueAsk);
+$('askCancel').addEventListener('click', closeAsk);
+$('askTask').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); queueAsk(); }
+});
+document.addEventListener('keydown', event => {
+  if (!ask.open || event.key !== 'Escape') return;
+  event.stopPropagation();
+  closeAsk();
+}, true);
+for (const element of [$('askModes'), $('askQueue'), $('askCancel')]) element.addEventListener('mousedown', event => event.preventDefault());
 
 // The reminder picker (the clock beside the field): a few ready-made times, and a time set by hand.
 const remindPop = $('remindPop');
@@ -1323,6 +1710,10 @@ window.relayPanelMode = info => {
   setFxPicker(false); // a freshly shown panel never starts with the picker open
   setMore(false);
   setRemind(false);
+  if (ask.resizing) ask.resizing = false; // the panel changed size because of the card: the card stays
+  else closeAsk(false);                  // a panel that appears again starts without it
+  closeType();
+  paintVoice(); // the window may have turned the microphone on or off
   applyTabs(); // the window may have changed the tabs while the panel was away
   fx.setScene({ mode, view });
   updateGlow();
@@ -1336,6 +1727,7 @@ window.relayPanelMode = info => {
   let target = typeof info.view === 'string' ? info.view : chosenView;
   if (current?.plan && (target === 'notes' || target === 'music')) target = 'task';
   setView(target, { focus: false });
+  syncHold(); // a card that is still open keeps the panel open
   // A plan that needs an answer does not fit in the small panel.
   if (mode === 'compact' && current?.plan) tell({ type: 'expand' });
 };

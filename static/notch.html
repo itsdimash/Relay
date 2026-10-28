@@ -43,6 +43,7 @@
     <button type="button" role="menuitem" id="moreQuit"><span id="quitLabel">Quit Relay</span><span id="quitConfirm" hidden>A task is running. Click again to quit.</span></button>
   </div>
 
+  <button type="button" class="speak-stop" id="speakStop" aria-label="Stop speaking" title="Stop speaking" hidden><span class="speak-bars" aria-hidden="true"><i></i><i></i><i></i></span>Stop</button>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden><span class="toast-icon" id="toastIcon" aria-hidden="true"></span><div class="toast-text"><strong id="toastTitle"></strong><span id="toastDetail"></span></div></div>
   <div id="toastBurst" class="toast-burst" aria-hidden="true"></div>
 
@@ -79,6 +80,29 @@
     </section>
 
     <section class="info" aria-label="Current task">
+      <div class="ask-card" id="askCard" role="group" aria-label="Send to the agents" hidden>
+        <input id="askTask" class="ask-task" type="text" maxlength="2000" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="What the agents should do">
+        <div class="ask-row">
+          <div class="ask-modes" id="askModes" role="radiogroup" aria-label="What the agents should do">
+            <button type="button" role="radio" data-mode="observe" aria-checked="false" title="Only look and answer. Nothing is changed.">Ask</button>
+            <button type="button" role="radio" data-mode="plan" aria-checked="false" title="Make a plan. Nothing is changed.">Plan</button>
+            <button type="button" role="radio" data-mode="build" aria-checked="false" title="Make the change, then review it. You approve the plan first.">Build</button>
+          </div>
+          <select id="askAgent" class="ask-agent" aria-label="Who should do it">
+            <option value="">Whole team</option>
+            <option value="observer">Observer</option>
+            <option value="builder">Builder</option>
+            <option value="reviewer">Reviewer</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+          </select>
+          <select id="askProject" class="ask-project" aria-label="Project"></select>
+          <button type="button" class="ask-close" id="askCancel" aria-label="Cancel" title="Cancel"></button>
+          <button type="button" class="btn primary" id="askQueue">Add to queue</button>
+        </div>
+        <p class="ask-note" id="askWho" hidden></p>
+        <p class="ask-note" id="askNote">It waits in the queue until you press Start task.</p>
+      </div>
       <header class="info-head">
         <span id="status" class="status" role="status">Relay is idle</span>
         <span id="timer" class="timer"></span>
@@ -133,10 +157,15 @@
       <div class="composer">
         <svg class="composer-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg>
         <input id="noteInput" class="note-input" type="text" maxlength="500" placeholder="Write a note…" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="New note">
+        <span class="composer-live" id="voiceLive" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <button type="button" class="composer-mic" id="micButton" aria-label="Dictate a note" aria-pressed="false" title="Hold to talk, or tap to start and stop" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>
+        </button>
+        <button type="button" class="composer-lang" id="voiceLang" aria-label="Speech language" title="Speech language" hidden>EN</button>
         <button type="button" class="composer-remind" id="remindButton" aria-haspopup="dialog" aria-expanded="false" aria-controls="remindPop" aria-label="Set a reminder" title="Set a reminder">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7.2v3.5l2.3 1.4M7 2.8h6"/></svg>
         </button>
-        <span class="composer-keys" id="noteKeys" aria-hidden="true"><kbd>↵</kbd><span>note</span><kbd>⌘↵</kbd><span>to-do</span></span>
+        <span class="composer-keys" id="noteKeys" title="Enter saves a note, ⌘ Enter saves a to-do"><kbd>↵</kbd><span>note</span><kbd>⌘↵</kbd><span>to-do</span></span>
         <button type="button" class="composer-chip" id="noteHint" hidden></button>
       </div>
       <div class="remind-pop" id="remindPop" role="dialog" aria-label="Set a reminder" hidden>
@@ -147,8 +176,18 @@
           <button type="button" class="remind-set" id="remindSet">Set</button>
         </div>
       </div>
+      <div class="ask-card type-card" id="typeCard" role="group" aria-label="Type into another app" hidden>
+        <input id="typeText" class="ask-task" type="text" maxlength="500" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="The words to type">
+        <div class="ask-row">
+          <span class="type-target" id="typeTarget"></span>
+          <button type="button" class="ask-close" id="typeCancel" aria-label="Cancel" title="Cancel"></button>
+          <button type="button" class="btn primary" id="typeGo">Type</button>
+        </div>
+        <p class="ask-note">The words are only typed. Nothing is sent or submitted.</p>
+      </div>
       <ul id="noteList" class="note-list"></ul>
       <p id="noteError" class="error" role="alert"></p>
+      <p id="voiceNote" class="voice-note" role="status"></p>
     </section>
 
     <section id="deliver" class="deliver" aria-label="Deliver files">

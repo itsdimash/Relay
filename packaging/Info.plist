@@ -24,6 +24,10 @@
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Relay listens while you hold the talk button or the right Option key, and turns what you say into a note or a reminder.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Relay turns what you say into text for your notes. Where your Mac supports it, this happens on the Mac itself.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>

@@ -117,6 +117,8 @@ function createStartup() {
 // (same address), and the panel reads them when it opens and when they change.
 const NOTCH_TABS_KEY = 'relay.notchTabs';
 const BATTERY_ALERTS_KEY = 'relay.batteryAlerts';
+const VOICE_KEY = 'relay.voice';
+const SPEAK_KEY = 'relay.speak'; // 'off', 'voice' (the default) or 'all'
 
 function createNotchMenu() {
   const button = $('notchButton');
@@ -139,6 +141,8 @@ function createNotchMenu() {
     for (const item of list.items()) {
       if (item.dataset.tab) item.setAttribute('aria-checked', String(!hidden.has(item.dataset.tab)));
       else if (item.dataset.alert === 'battery') item.setAttribute('aria-checked', String(read(BATTERY_ALERTS_KEY) !== 'off'));
+      else if (item.dataset.voice) item.setAttribute('aria-checked', String(read(VOICE_KEY) !== 'off'));
+      else if (item.dataset.speak) item.setAttribute('aria-checked', String(item.dataset.speak === 'all' ? read(SPEAK_KEY) === 'all' : read(SPEAK_KEY) !== 'off'));
     }
   }
 
@@ -151,6 +155,12 @@ function createNotchMenu() {
       write(NOTCH_TABS_KEY, JSON.stringify({ hidden: [...hidden] }));
     } else if (item.dataset.alert === 'battery') {
       write(BATTERY_ALERTS_KEY, read(BATTERY_ALERTS_KEY) === 'off' ? 'on' : 'off');
+    } else if (item.dataset.voice) {
+      write(VOICE_KEY, read(VOICE_KEY) === 'off' ? 'on' : 'off');
+    } else if (item.dataset.speak === 'on') {
+      write(SPEAK_KEY, read(SPEAK_KEY) === 'off' ? 'voice' : 'off'); // off or back to the default
+    } else if (item.dataset.speak === 'all') {
+      write(SPEAK_KEY, read(SPEAK_KEY) === 'all' ? 'voice' : 'all');
     }
     paint();
   }

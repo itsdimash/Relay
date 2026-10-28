@@ -1,6 +1,9 @@
 #import "RelayNotchPanel.h"
 #import "RelayNowPlaying.h"
 #import "RelayNotchGlow.h"
+#import "RelayDictation.h"
+#import "RelaySpeech.h"
+#import "RelayActions.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
 
@@ -20,6 +23,8 @@ static const CGFloat CompactWidth = 440;
 static const CGFloat CompactBodyHeight = 170;
 static const CGFloat FullWidth = 780;
 static const CGFloat FullBodyHeight = 312;
+static const CGFloat CardWidth = 680;       // the full panel when it only holds the card for a spoken request: wide enough for
+static const CGFloat CardBodyHeight = 186;  // its row of choices (and Russian), and no taller than the card
 static const CGFloat PanelRadius = 26;
 static const NSTimeInterval PillVisibleSeconds = 4.2; // how long a track-change pill stays out
 static const NSTimeInterval PillMinGap = 2.0;         // quick skipping does not flash the pill again and again
@@ -34,6 +39,10 @@ static const NSTimeInterval TapMaxHold = 0.30;    // a Command "tap" is pressed 
 static const NSTimeInterval DoubleTapWindow = 0.45; // two taps within this time toggle the panel
 static const CGEventFlags RightCommandMask = 0x00000010; // device-dependent bit for the right Command key
 static const CGEventFlags LeftCommandMask = 0x00000008;
+static const CGEventFlags RightOptionMask = 0x00000040; // the right Option key: hold it to talk
+static const CGEventFlags LeftOptionMask = 0x00000020;
+static const NSTimeInterval VoiceKeyHold = 0.35;       // held this long on its own, it is "talk", not a typing shortcut
+static const NSTimeInterval VoiceVisibleSeconds = 20.0;
 
 // A borderless panel that can take clicks and keys without making Relay the active app.
 @interface RelayNotchWindow : NSPanel
@@ -211,7 +220,7 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 }
 @end
 
-@interface RelayNotchPanel () <WKScriptMessageHandler, WKNavigationDelegate, NSDraggingSource>
+@interface RelayNotchPanel () <WKScriptMessageHandler, WKNavigationDelegate, NSDraggingSource, RelayDictationDelegate, RelaySpeechDelegate>
 @property(nonatomic, strong) NSURL *pageURL;
 @property(nonatomic, strong) RelayNotchWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
@@ -229,6 +238,15 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 @property(nonatomic) BOOL sticky;   // opened with the keyboard: stays until toggled again
 @property(nonatomic) BOOL holding;  // the person is typing a note: do not close because the pointer left
 @property(nonatomic, strong) RelayNowPlaying *nowPlaying; // what is playing, shown as a strip in the panel
+@property(nonatomic, strong) RelayDictation *dictation; // speech to text for the note field
+@property(nonatomic, strong) RelaySpeech *speech;       // text to speech: answers said out loud
+@property(nonatomic) BOOL cardSize;       // the full panel is the small one that only holds a spoken request's card
+@property(nonatomic) BOOL laidOutCard;    // ... and whether the page was last laid out that way
+@property(nonatomic, strong) NSRunningApplication *typeTarget; // the app a spoken "type …" goes to, as shown to the person
+@property(nonatomic) BOOL optionDown;       // the right Option key is down
+@property(nonatomic) BOOL optionValid;      // and nothing else was pressed with it
+@property(nonatomic) BOOL voiceKeyActive;   // it has been held long enough: the microphone is on
+@property(nonatomic) CFAbsoluteTime optionPressedAt;
 @property(nonatomic) BOOL commandDown;
 @property(nonatomic) BOOL commandTapValid;
 @property(nonatomic) CFAbsoluteTime commandPressedAt;
@@ -592,7 +610,7 @@ static NSColor *DominantColor(NSString *dataURL) {
     switch (mode) {
         case RelayPanelModePill: return NSMakeSize(PillWidth, band + PillBodyHeight);
         case RelayPanelModeCompact: return NSMakeSize(CompactWidth, band + CompactBodyHeight);
-        case RelayPanelModeFull: return NSMakeSize(FullWidth, band + FullBodyHeight);
+        case RelayPanelModeFull: return self.cardSize ? NSMakeSize(CardWidth, band + CardBodyHeight) : NSMakeSize(FullWidth, band + FullBodyHeight);
     }
     return NSMakeSize(CompactWidth, band + CompactBodyHeight);
 }
@@ -608,7 +626,7 @@ static NSColor *DominantColor(NSString *dataURL) {
     NSSize notch = [self notchSizeForScreen:screen];
     NSArray *names = @[ @"pill", @"compact", @"full" ];
     NSDictionary *info = @{ @"mode": names[self.mode], @"notchWidth": @(round(notch.width)), @"notchHeight": @(round(notch.height)),
-                            @"view": self.modeView ?: NSNull.null };
+                            @"view": self.modeView ?: NSNull.null, @"card": @(self.cardSize && self.mode == RelayPanelModeFull) };
     NSString *script = @"if (!window.relayPanelMode) return 'page has no mode handler yet'; window.relayPanelMode(info); return 'ok';";
     [self.webView callAsyncJavaScript:script
                             arguments:@{ @"info": info }
@@ -621,7 +639,8 @@ static NSColor *DominantColor(NSString *dataURL) {
 
 // Changes the shape. A panel that is already open grows or shrinks smoothly; one that is opening just aims at the new size.
 - (void)changeMode:(RelayPanelMode)mode view:(NSString *)view {
-    BOOL changed = mode != self.mode;
+    BOOL changed = mode != self.mode || self.cardSize != self.laidOutCard;
+    self.laidOutCard = self.cardSize;
     self.mode = mode;
     self.modeView = view;
     NSScreen *screen = [self activeScreen];
@@ -726,6 +745,7 @@ static NSColor *DominantColor(NSString *dataURL) {
 }
 
 - (void)hideAnimated:(BOOL)animated {
+    [self.dictation cancel]; // the panel is going away: nothing is listening to the person any more
     [self cancelTimer:&_showTimer];
     [self cancelTimer:&_hideTimer];
     [self cancelTimer:&_doneTimer];
@@ -738,12 +758,21 @@ static NSColor *DominantColor(NSString *dataURL) {
     self.holding = NO;
     if (!self.shown) return;
     self.shown = NO;
+    self.cardSize = NO; // the next full panel is a full one unless a card asks otherwise
     __weak RelayNotchPanel *weakSelf = self;
     [self animateToProgress:0 duration:animated ? 0.32 : 0 completion:^{
         // A new show request may have started while this was running.
         RelayNotchPanel *strongSelf = weakSelf;
         if (strongSelf && !strongSelf.shown) [strongSelf.window orderOut:nil];
     }];
+}
+
+// The full panel is either the big one or the small one that holds only a spoken request's card. Anything else that needs the full
+// panel (the Office, a plan to approve) asks for the big one, and a panel that is open in the other size changes size.
+- (void)useCardSize:(BOOL)card {
+    if (self.cardSize == card) return;
+    self.cardSize = card;
+    if (self.shown && self.mode == RelayPanelModeFull) [self changeMode:RelayPanelModeFull view:self.modeView];
 }
 
 // Double-tap right Command: open the full panel on the Office, or close it when it is already full.
@@ -756,6 +785,7 @@ static NSColor *DominantColor(NSString *dataURL) {
     [self cancelTimer:&_pillTimer];
     self.pinned = YES;
     self.sticky = YES;
+    [self useCardSize:NO];
     [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeFull view:@"office"];
     // Opened on purpose from the keyboard: take the keys so Escape works at once.
     [self.window makeKeyWindow];
@@ -768,6 +798,7 @@ static NSColor *DominantColor(NSString *dataURL) {
     [self cancelTimer:&_doneTimer];
     [self cancelTimer:&_pillTimer];
     self.pinned = YES;
+    [self useCardSize:NO];
     [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeFull view:nil];
 }
 
@@ -964,6 +995,51 @@ static NSColor *DominantColor(NSString *dataURL) {
     return point.y >= NSMaxY(area) - (notch.height + DragZoneDepth) && fabs(point.x - NSMidX(area)) <= notch.width / 2 + DragZoneMargin;
 }
 
+// Hold the right Option key (on its own, for a third of a second) to talk: the panel opens on the Notes, the microphone
+// listens while the key is down, and the words appear in the note field. Read the same way as the Command taps.
+- (void)checkVoiceKey {
+    CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
+    CGEventFlags others = kCGEventFlagMaskShift | kCGEventFlagMaskControl | kCGEventFlagMaskCommand;
+    BOOL rightDown = (flags & RightOptionMask) != 0;
+    BOOL clean = rightDown && !(flags & LeftOptionMask) && !(flags & others);
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (rightDown && !self.optionDown) {
+        self.optionDown = YES;
+        self.optionPressedAt = now;
+        self.optionValid = clean;
+        self.voiceKeyActive = NO;
+        return;
+    }
+    if (rightDown) {
+        if (!clean) self.optionValid = NO;
+        CFTimeInterval held = now - self.optionPressedAt;
+        if (self.optionValid && !self.voiceKeyActive && held >= VoiceKeyHold) {
+            // Option with a letter types a special character, and with a click it is a shortcut: neither is "talk".
+            CFTimeInterval sinceKey = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGEventKeyDown);
+            CFTimeInterval sinceClick = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGEventLeftMouseDown);
+            if (sinceKey > held + 0.05 && sinceClick > held + 0.05) {
+                self.voiceKeyActive = YES;
+                [self voiceKeyChanged:YES];
+            } else {
+                self.optionValid = NO;
+            }
+        }
+        return;
+    }
+    if (!self.optionDown) return;
+    self.optionDown = NO;
+    if (self.voiceKeyActive) {
+        self.voiceKeyActive = NO;
+        [self voiceKeyChanged:NO];
+    }
+}
+
+- (void)voiceKeyChanged:(BOOL)down {
+    if (!self.enabled) return;
+    if (down) [self peekView:@"notes" seconds:VoiceVisibleSeconds];
+    [self callPage:@"if (window.relayVoiceKey) window.relayVoiceKey(down);" arguments:@{ @"down": @(down) }];
+}
+
 // Double-tap the right Command key to open or close the panel. The key state is read directly,
 // so this works in every app without asking for Input Monitoring or Accessibility access.
 - (void)checkCommandTaps {
@@ -1006,6 +1082,7 @@ static NSColor *DominantColor(NSString *dataURL) {
 
 - (void)pointerMoved {
     [self checkCommandTaps];
+    [self checkVoiceKey];
     if (!self.enabled) return;
     [self checkDragOut];
     if (self.draggingOut) { // the panel stays while its files are being carried away
@@ -1140,6 +1217,7 @@ static NSColor *DominantColor(NSString *dataURL) {
         NSString *view = [body[@"view"] isEqual:@"office"] ? @"office" : nil;
         if (self.shown) {
             [self cancelTimer:&_pillTimer];
+            [self useCardSize:!view && [body[@"card"] boolValue]]; // a spoken request's card needs a wide panel, not a tall one
             [self showOnScreen:self.screen mode:RelayPanelModeFull view:view];
             // Pressed on purpose: take the keys so Escape closes it. It still closes when the pointer leaves.
             if (view) {
@@ -1174,11 +1252,92 @@ static NSColor *DominantColor(NSString *dataURL) {
             [self cancelTimer:&_hideTimer];
             [self.window makeKeyWindow];
         }
+    } else if ([type isEqualToString:@"dictate"]) {
+        // The microphone button, or the page answering the right Option key: listen, finish, or throw away.
+        NSString *action = [body[@"action"] isKindOfClass:NSString.class] ? body[@"action"] : @"";
+        if ([action isEqualToString:@"start"]) {
+            NSString *locale = [body[@"locale"] isKindOfClass:NSString.class] ? body[@"locale"] : @"en-US";
+            if (![@[ @"en-US", @"ru-RU" ] containsObject:locale]) locale = @"en-US";
+            if (!self.dictation) {
+                self.dictation = [[RelayDictation alloc] init];
+                self.dictation.delegate = self;
+            }
+            [self.speech stop]; // the person is talking now: the answer stops (and the microphone does not hear it)
+            [self.dictation startWithLocale:locale];
+        } else if ([action isEqualToString:@"stop"]) {
+            [self.dictation stop];
+        } else if ([action isEqualToString:@"cancel"]) {
+            [self.dictation cancel];
+        }
+    } else if ([type isEqualToString:@"speak"]) {
+        // An answer to say out loud (or "stop"). The voice carries on if the panel hides: the answer is for the person, not the panel.
+        if ([body[@"action"] isEqual:@"stop"]) {
+            [self.speech stop];
+        } else {
+            NSString *locale = [body[@"locale"] isKindOfClass:NSString.class] ? body[@"locale"] : @"en-US";
+            if (![@[ @"en-US", @"ru-RU" ] containsObject:locale]) locale = @"en-US";
+            if (!self.speech) {
+                self.speech = [[RelaySpeech alloc] init];
+                self.speech.delegate = self;
+            }
+            [self.speech speak:body[@"text"] locale:locale];
+        }
+    } else if ([type isEqualToString:@"app"]) {
+        // "open Safari": the names the page thinks the app may have (the first one that is installed is opened).
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        for (id name in ([body[@"names"] isKindOfClass:NSArray.class] ? body[@"names"] : @[])) {
+            if ([name isKindOfClass:NSString.class] && [name length] > 0 && [name length] <= 60 && names.count < 4) [names addObject:name];
+        }
+        __weak typeof(self) weakSelf = self;
+        [RelayActions openApplicationNames:names done:^(NSString *state, NSString *detail) {
+            [weakSelf reportAction:@"app" state:state detail:detail];
+            if ([state isEqualToString:@"opened"]) [weakSelf hideAnimated:YES]; // the app is in front now
+        }];
+    } else if ([type isEqualToString:@"front"]) {
+        // Which app would "type …" go to? Asked when the words are shown, so that the person sees where they will land.
+        self.typeTarget = [RelayActions workingApplication];
+        [self reportAction:@"front" state:self.typeTarget ? @"ok" : @"none" detail:self.typeTarget.localizedName ?: @""];
+    } else if ([type isEqualToString:@"type"]) {
+        NSString *text = [body[@"text"] isKindOfClass:NSString.class] ? body[@"text"] : @"";
+        if (text.length == 0 || text.length > 2000) return;
+        __weak typeof(self) weakSelf = self;
+        [RelayActions typeText:text into:self.typeTarget prepare:^{ [weakSelf hideAnimated:YES]; } done:^(NSString *state, NSString *detail) {
+            [weakSelf reportAction:@"type" state:state detail:detail];
+        }];
+    } else if ([type isEqualToString:@"telegram"]) {
+        NSString *text = [body[@"text"] isKindOfClass:NSString.class] ? body[@"text"] : @"";
+        if (text.length == 0 || text.length > 2000) return;
+        __weak typeof(self) weakSelf = self;
+        [RelayActions draftTelegram:text done:^(NSString *state, NSString *detail) {
+            [weakSelf reportAction:@"telegram" state:state detail:detail];
+            if ([state isEqualToString:@"opened"]) { // a moment to read where the words are, then out of the way
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [weakSelf hideAnimated:YES]; });
+            }
+        }];
     } else if ([type isEqualToString:@"settle"]) {
         // The question was answered somewhere else, so the panel no longer needs to stay.
         self.pinned = NO;
         if (self.shown && ![self pointerIsNearPanel]) [self scheduleHide];
     }
+}
+
+// The answer to an app, typing or Telegram request, for the page to show.
+- (void)reportAction:(NSString *)kind state:(NSString *)state detail:(NSString *)detail {
+    [self callPage:@"if (window.relayAction) window.relayAction(kind, state, detail);"
+         arguments:@{ @"kind": kind, @"state": state ?: @"", @"detail": detail ?: @"" }];
+}
+
+#pragma mark - RelayDictationDelegate
+
+- (void)dictation:(RelayDictation *)dictation reports:(NSString *)state text:(NSString *)text error:(NSString *)error {
+    [self callPage:@"if (window.relayDictation) window.relayDictation(state, text, error);"
+         arguments:@{ @"state": state, @"text": text ?: @"", @"error": error ?: @"" }];
+}
+
+#pragma mark - RelaySpeechDelegate
+
+- (void)speech:(RelaySpeech *)speech reports:(NSString *)state {
+    [self callPage:@"if (window.relaySpeech) window.relaySpeech(state);" arguments:@{ @"state": state }];
 }
 
 #pragma mark - WKNavigationDelegate

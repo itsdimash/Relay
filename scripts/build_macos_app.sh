@@ -87,10 +87,15 @@ CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache" xcrun clang \
   -framework WebKit \
   -framework QuartzCore \
   -framework ServiceManagement \
+  -framework Speech \
+  -framework AVFoundation \
   "$PROJECT_ROOT/packaging/RelayNativeApp.m" \
   "$PROJECT_ROOT/packaging/RelayNotchPanel.m" \
   "$PROJECT_ROOT/packaging/RelayNowPlaying.m" \
   "$PROJECT_ROOT/packaging/RelayNotchGlow.m" \
+  "$PROJECT_ROOT/packaging/RelayDictation.m" \
+  "$PROJECT_ROOT/packaging/RelaySpeech.m" \
+  "$PROJECT_ROOT/packaging/RelayActions.m" \
   -o "$CONTENTS/MacOS/Relay"
 
 if ! build_now_playing_adapter; then
@@ -117,7 +122,7 @@ if [[ "$SIGNING_IDENTITY" == "-" ]]; then
 else
   codesign --force --options runtime --timestamp --entitlements "$PROJECT_ROOT/packaging/Relay.entitlements" --sign "$SIGNING_IDENTITY" "$CONTENTS/Resources/RelayServer"
   if [[ -d "$NOW_PLAYING_FRAMEWORK" ]]; then codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$NOW_PLAYING_FRAMEWORK"; fi
-  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
+  codesign --force --options runtime --timestamp --entitlements "$PROJECT_ROOT/packaging/RelayApp.entitlements" --sign "$SIGNING_IDENTITY" "$APP"
 fi
 
 codesign --verify --deep --strict --verbose=2 "$APP"
