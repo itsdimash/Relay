@@ -77,6 +77,28 @@ class EngineTests(unittest.TestCase):
         app.set_note_done(note_id, True)
         self.assertEqual(app.due_reminders(), [])
 
+    def test_snooze_sets_a_new_time_and_the_reminder_goes_off_again(self):
+        note_id = app.add_note('call mom', 'note', stamp(30))[0]['id']
+        self.make_due(note_id)
+        app.mark_reminded([note_id])
+        before = int(time.time() * 1000)
+        note = app.snooze_note(note_id, 10)[0]
+        self.assertFalse(note['reminded'])
+        self.assertTrue(before + 10 * 60000 <= note['due'] <= int(time.time() * 1000) + 10 * 60000)
+        self.assertEqual(app.due_reminders(), [])               # quiet until the ten minutes are over
+        self.make_due(note_id)
+        self.assertEqual([item['id'] for item in app.due_reminders()], [note_id])
+
+    def test_snooze_checks_what_it_is_given(self):
+        plain = app.add_note('plain', 'note')[0]['id']
+        for note_id, minutes in ((plain, 10), ('missing', 10)):
+            with self.assertRaises(ValueError):
+                app.snooze_note(note_id, minutes)
+        timed = app.add_note('timed', 'note', stamp(5))[0]['id']
+        for bad in (0, -5, 24 * 60 + 1, '10', 1.5, True, None):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                app.snooze_note(timed, bad)
+
     def test_marking_checks_what_it_is_given(self):
         for bad in ('abc', [1], None, ['x'] * 51):
             with self.assertRaises(ValueError):
@@ -132,6 +154,12 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual((status, data['notes'][0]['reminded']), (200, True))
         self.assertEqual(self.poll()['reminders'], [])
 
+    def test_snoozing_through_the_api(self):
+        note_id = self.post('/api/notes/add', {'text': 'standup', 'kind': 'note', 'due': stamp(30)})[1]['notes'][0]['id']
+        status, data = self.post('/api/notes/snooze', {'id': note_id, 'minutes': 10})
+        self.assertEqual((status, data['notes'][0]['reminded']), (200, False))
+        self.assertEqual(self.post('/api/notes/snooze', {'id': note_id, 'minutes': 0})[0], 400)
+
     def test_a_past_time_gets_a_clear_error(self):
         status, data = self.post('/api/notes/add', {'text': 'late', 'kind': 'note', 'due': stamp(-120)})
         self.assertEqual(status, 400)
@@ -139,7 +167,7 @@ class HTTPTests(unittest.TestCase):
 
 
 HARNESS = """
-import { parseReminder, dueLabel, createReminderWatcher } from '%s';
+import { parseReminder, dueLabel, createReminderWatcher, quickChoices, startingMoment, stepMoment, canSet, dayLabel, hourText, minuteText } from '%s';
 const now = new Date(2026, 9, 29, 15, 0, 0).getTime();   // Thursday 29 October 2026, 15:00 in the Mac's own zone
 const when = (day, hour, minute = 0) => new Date(2026, 9, day, hour, minute).getTime();
 %s
@@ -167,6 +195,8 @@ class ReadingTimesTests(unittest.TestCase):
             'gym tomorrow at 9am': ('gym', 'when(30, 9)'),
             'today at 17:30 dinner': ('dinner', 'when(29, 17, 30)'),
             'remind me to pay rent on friday at 18:00': ('pay rent', 'when(30, 18)'),
+            'homework after 10 min': ('homework', 'now + 10 * 60000'),
+            'after half an hour tea': ('tea', 'now + 30 * 60000'),
             'через 30 мин позвонить': ('позвонить', 'now + 30 * 60000'),
             'через полчаса чай': ('чай', 'now + 30 * 60000'),
             'созвон через 2 часа': ('созвон', 'now + 120 * 60000'),
@@ -208,6 +238,56 @@ console.log(JSON.stringify(texts.map(text => parseReminder(text, now))));""")
     def test_a_note_that_is_only_a_time_keeps_its_words(self):
         result = run_node("const r = parseReminder('in 10 minutes', now); console.log(JSON.stringify([r.text, r.due === now + 600000]));")
         self.assertEqual(result, ['in 10 minutes', True])
+
+    def test_the_ready_made_times(self):
+        result = run_node("""
+const ids = now2 => quickChoices(now2).map(c => c.id).join(',');
+const week = quickChoices(now).find(c => c.id === 'week');
+console.log(JSON.stringify({
+  afternoon: ids(now),
+  lateEvening: ids(when(29, 22)),                                 // 18:00 has gone by: no "Tonight"
+  almostSix: ids(when(29, 17, 30)),                               // less than an hour away: no "Tonight" either
+  tonight: quickChoices(now).find(c => c.id === 'tonight').at === when(29, 18),
+  tomorrow: quickChoices(now).find(c => c.id === 'tomorrow').at === when(30, 9),
+  monday: week.at === new Date(2026, 10, 2, 9).getTime(),         // the coming Monday, 2 November
+  mondayOnMonday: quickChoices(new Date(2026, 10, 2, 8).getTime()).find(c => c.id === 'week').at === new Date(2026, 10, 9, 9).getTime(),
+  relative: quickChoices(now).filter(c => c.minutes).map(c => c.minutes)
+}));""".replace('import', ''))
+        self.assertEqual(result['afternoon'], 'in10,in30,in60,in180,tonight,tomorrow,week')
+        self.assertEqual(result['lateEvening'], 'in10,in30,in60,in180,tomorrow,week')
+        self.assertEqual(result['almostSix'], 'in10,in30,in60,in180,tomorrow,week')
+        for key in ('tonight', 'tomorrow', 'monday', 'mondayOnMonday'):
+            self.assertTrue(result[key], key)
+        self.assertEqual(result['relative'], [10, 30, 60, 180])
+
+    def test_the_time_steppers(self):
+        result = run_node("""
+const start = startingMoment(now);                                // 15:00 -> 16:00 today
+const text = ms => `${dayLabel(ms, now)} ${hourText(ms)}:${minuteText(ms)}`;
+console.log(JSON.stringify({
+  start: text(start),
+  hour: text(stepMoment(start, 'hour', 1, now)),
+  wrap: text(stepMoment(when(29, 23), 'hour', 1, now)),           // 23 -> 00 stays on the same day
+  minute: text(stepMoment(start, 'minute', 1, now)),
+  minuteBack: text(stepMoment(start, 'minute', -1, now)),         // 16:00 -> 16:55, still the 16th hour
+  nextDay: text(stepMoment(start, 'day', 1, now)),
+  noPast: text(stepMoment(start, 'day', -1, now)),                // never before today
+  far: text(stepMoment(start, 'day', 3, now)),
+  tooFar: stepMoment(new Date(2027, 10, 20, 9).getTime(), 'day', 1, now) === new Date(2027, 10, 20, 9).getTime(),
+  can: [canSet(now + 10000, now), canSet(now + 60000, now), canSet(now + 400 * 86400000, now)],
+  late: startingMoment(when(29, 23, 50)) === new Date(2026, 9, 30, 1).getTime()
+}));""")
+        self.assertEqual(result['start'], 'Today 16:00')
+        self.assertEqual(result['hour'], 'Today 17:00')
+        self.assertEqual(result['wrap'], 'Today 00:00')
+        self.assertEqual(result['minute'], 'Today 16:05')
+        self.assertEqual(result['minuteBack'], 'Today 16:55')
+        self.assertEqual(result['nextDay'], 'Tomorrow 16:00')
+        self.assertEqual(result['noPast'], 'Today 16:00')
+        self.assertEqual(result['far'], '01.11 16:00')
+        self.assertTrue(result['tooFar'])
+        self.assertEqual(result['can'], [False, True, False])
+        self.assertTrue(result['late'])
 
     def test_labels(self):
         result = run_node("console.log(JSON.stringify([dueLabel(when(29, 17, 5), now), dueLabel(when(30, 9), now), dueLabel(new Date(2026, 10, 3, 9).getTime(), now)]));")
@@ -251,8 +331,9 @@ const context = { window, document: { documentElement: { lang: '' }, addEventLis
   localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } };
 vm.runInNewContext(fs.readFileSync('%s', 'utf8'), context);
 vm.runInNewContext(fs.readFileSync('%s', 'utf8'), context);
-const said = ['Reminder', 'Reminder · 17:30', 'Reminder · Tomorrow 09:00', 'Reminder · 03.11 09:00', 'Tomorrow 09:00', '2 reminders', '5 reminders',
-  'Enter saves a note · ⌘ Enter saves a to-do · add “in 30 min” or “tomorrow at 9:00” for a reminder'];
+const said = ['Set a reminder', 'Remove reminder', 'In 10 min', 'In 30 min', 'In 1 hour', 'In 3 hours', 'Tonight', 'Tomorrow', 'Today', 'Next week', 'Set',
+  'Earlier day', 'Later day', 'Earlier hour', 'Later hour', 'Fewer minutes', 'More minutes', 'Reminder', '+10 min', 'Snooze 10 minutes', 'Snooze: call mom', 'Reminder · 17:30', 'Reminder · Tomorrow 09:00', 'Reminder · 03.11 09:00', 'Tomorrow 09:00', '2 reminders', '5 reminders',
+  'note', 'to-do', 'Try “call mom in 30 min” and Relay will remind you.'];
 console.log(JSON.stringify(said.filter(text => window.relayI18n.translate(text) === text)));
 console.log(JSON.stringify(['Reminder · Tomorrow 09:00', '2 reminders', '5 reminders', '21 reminders'].map(text => window.relayI18n.translate(text))));
 """ % ((STATIC / 'i18n.js').as_posix(), (STATIC / 'i18n-ru.js').as_posix())
@@ -284,6 +365,21 @@ class WiringTests(unittest.TestCase):
         peek = self.PANEL.split('- (void)peekReminder', 1)[1].split('}', 1)[0]
         self.assertIn('@"notes"', peek)
         self.assertIn("'notch-reminders'", self.HTTP)                    # the page may load the module
+
+    def test_a_gone_off_reminder_has_a_snooze_button(self):
+        self.assertIn("'/api/notes/snooze', { id: note.id, minutes: 10 }", self.NOTCH)
+        self.assertIn('note.reminded && !note.done', self.NOTCH)
+        self.assertIn('.note-snooze', (STATIC / 'notch.css').read_text())
+
+    def test_the_picker_beside_the_field(self):
+        html = (STATIC / 'notch.html').read_text()
+        for element in ('id="remindButton"', 'id="remindPop"', 'id="remindQuick"', 'id="remindSet"', 'data-field="day"', 'data-field="hour"', 'data-field="minute"'):
+            self.assertIn(element, html)
+        self.assertIn('const picked = pendingDue()', self.NOTCH)           # a picked time wins over the words
+        self.assertIn('pending = null;', self.NOTCH)                       # and is forgotten once the note is saved
+        self.assertIn('setRemind(false);\n  applyTabs()', self.NOTCH)       # a freshly shown panel starts with it closed
+        self.assertIn("event.key !== 'Escape'", self.NOTCH)
+        self.assertIn('overflow: clip', (STATIC / 'notch.css').read_text())  # focus can no longer slide the page sideways
 
     def test_the_toast_has_its_colour(self):
         css = (STATIC / 'notch.css').read_text()

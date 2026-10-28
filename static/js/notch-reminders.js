@@ -25,15 +25,15 @@ const timeRe = new RegExp(
   `(?<![${L}:.])(?:(at|around|@|в|к)\\s*)?(\\d{1,2})(?:[:.](\\d{2}))?(?:\\s*(a\\.?m\\.?|p\\.?m\\.?|утра|дня|вечера|ночи))?${END}`, 'giu'
 );
 
-// "in 1h30", "in 2 hours", "in half an hour", "через 15 минут", "через полчаса", "через 3 дня"
+// "in 1h30", "after 10 min", "in 2 hours", "in half an hour", "через 15 минут", "через полчаса", "через 3 дня"
 const EN_UNITS = [{ word: 'days?|d', minutes: 1440 }, { word: 'hours?|hrs?|h', minutes: 60 }, { word: 'minutes?|mins?|m', minutes: 1 }];
 const RU_UNITS = [{ word: 'дн\\p{L}*|день|д', minutes: 1440 }, { word: 'час\\p{L}*|ч', minutes: 60 }, { word: 'мин\\p{L}*|м', minutes: 1 }];
 const relativeRes = [
-  { re: new RegExp(`${START}in\\s+(\\d{1,3})\\s*(?:hours?|hrs?|h)\\s*(?:and\\s*)?(\\d{1,3})\\s*(?:minutes?|mins?|m)?${END}`, 'iu'), compound: true },
+  { re: new RegExp(`${START}(?:in|after)\\s+(\\d{1,3})\\s*(?:hours?|hrs?|h)\\s*(?:and\\s*)?(\\d{1,3})\\s*(?:minutes?|mins?|m)?${END}`, 'iu'), compound: true },
   { re: new RegExp(`${START}через\\s+(\\d{1,3})\\s*(?:час\\p{L}*|ч)\\s*(?:и\\s*)?(\\d{1,3})\\s*(?:мин\\p{L}*|м)?${END}`, 'iu'), compound: true },
-  { re: new RegExp(`${START}in\\s+(\\d{1,4}|an?|one)\\s*(${EN_UNITS.map(u => u.word).join('|')})${END}`, 'iu'), units: EN_UNITS },
+  { re: new RegExp(`${START}(?:in|after)\\s+(\\d{1,4}|an?|one)\\s*(${EN_UNITS.map(u => u.word).join('|')})${END}`, 'iu'), units: EN_UNITS },
   { re: new RegExp(`${START}через\\s+(\\d{1,4})\\s*(${RU_UNITS.map(u => u.word).join('|')})${END}`, 'iu'), units: RU_UNITS },
-  { re: new RegExp(`${START}in\\s+(?:a\\s+)?half\\s+(?:an?\\s+)?hour${END}`, 'iu'), fixed: 30 },
+  { re: new RegExp(`${START}(?:in|after)\\s+(?:a\\s+)?half\\s+(?:an?\\s+)?hour${END}`, 'iu'), fixed: 30 },
   { re: new RegExp(`${START}через\\s+полчаса${END}`, 'iu'), fixed: 30 },
   { re: new RegExp(`${START}через\\s+час${END}`, 'iu'), fixed: 60 },
   { re: new RegExp(`${START}через\\s+минуту${END}`, 'iu'), fixed: 1 },
@@ -144,6 +144,57 @@ export function parseReminder(input, now = Date.now()) {
 }
 
 const two = n => String(n).padStart(2, '0');
+const startOfDay = ms => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+// The buttons beside the note field: a few ready-made times, and a time that can be stepped by hand.
+// "minutes" choices count from the moment the note is saved; "at" choices are a fixed moment.
+export function quickChoices(now = Date.now()) {
+  const choices = [
+    { id: 'in10', label: 'In 10 min', minutes: 10 },
+    { id: 'in30', label: 'In 30 min', minutes: 30 },
+    { id: 'in60', label: 'In 1 hour', minutes: 60 },
+    { id: 'in180', label: 'In 3 hours', minutes: 180 }
+  ];
+  const tonight = at(now, 0, { hour: 18, minute: 0 });
+  if (tonight - now >= 60 * MINUTE) choices.push({ id: 'tonight', label: 'Tonight', at: tonight, time: '18:00' });
+  choices.push({ id: 'tomorrow', label: 'Tomorrow', at: at(now, 1, { hour: 9, minute: 0 }), time: '09:00' });
+  const ahead = (8 - new Date(now).getDay()) % 7 || 7; // the coming Monday, never today
+  choices.push({ id: 'week', label: 'Next week', at: at(now, ahead, { hour: 9, minute: 0 }), time: '09:00' });
+  return choices;
+}
+
+// Where the hand-set time starts: the next full hour, at least twenty minutes away.
+export function startingMoment(now = Date.now()) {
+  const date = new Date(now + 20 * MINUTE);
+  date.setMinutes(0, 0, 0);
+  date.setHours(date.getHours() + 1);
+  return date.getTime();
+}
+
+// One press on a stepper: the day by one, the hour by one (wrapping inside the day), the minutes by five (wrapping inside the hour).
+// The day never goes before today or more than a year ahead.
+export function stepMoment(ms, field, direction, now = Date.now()) {
+  const date = new Date(ms);
+  if (field === 'day') {
+    date.setDate(date.getDate() + direction);
+    if (startOfDay(date.getTime()) < startOfDay(now) || date.getTime() - now > MAX_AHEAD) return ms;
+  } else if (field === 'hour') date.setHours((date.getHours() + direction + 24) % 24);
+  else date.setMinutes((date.getMinutes() + 5 * direction + 60) % 60);
+  return date.getTime();
+}
+
+export const canSet = (ms, now = Date.now()) => ms > now + 30000 && ms - now <= MAX_AHEAD;
+export const hourText = ms => two(new Date(ms).getHours());
+export const minuteText = ms => two(new Date(ms).getMinutes());
+
+// "Today", "Tomorrow", or the date for the day stepper.
+export function dayLabel(ms, now = Date.now()) {
+  const gap = Math.round((startOfDay(ms) - startOfDay(now)) / DAY);
+  if (gap === 0) return 'Today';
+  if (gap === 1) return 'Tomorrow';
+  const date = new Date(ms);
+  return `${two(date.getDate())}.${two(date.getMonth() + 1)}`;
+}
 
 // How a reminder's time is shown beside the note: "17:30", "Tomorrow 09:00", "03.11 09:00".
 export function dueLabel(due, now = Date.now()) {

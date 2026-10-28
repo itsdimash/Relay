@@ -130,8 +130,23 @@
     </section>
 
     <section id="notes" class="notes" aria-label="Notes and to-dos">
-      <input id="noteInput" class="note-input" type="text" maxlength="500" placeholder="Write a note…" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="New note">
-      <p class="note-hint" id="noteHint">Enter saves a note · ⌘ Enter saves a to-do · add “in 30 min” or “tomorrow at 9:00” for a reminder</p>
+      <div class="composer">
+        <svg class="composer-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg>
+        <input id="noteInput" class="note-input" type="text" maxlength="500" placeholder="Write a note…" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="New note">
+        <button type="button" class="composer-remind" id="remindButton" aria-haspopup="dialog" aria-expanded="false" aria-controls="remindPop" aria-label="Set a reminder" title="Set a reminder">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7.2v3.5l2.3 1.4M7 2.8h6"/></svg>
+        </button>
+        <span class="composer-keys" id="noteKeys" aria-hidden="true"><kbd>↵</kbd><span>note</span><kbd>⌘↵</kbd><span>to-do</span></span>
+        <button type="button" class="composer-chip" id="noteHint" hidden></button>
+      </div>
+      <div class="remind-pop" id="remindPop" role="dialog" aria-label="Set a reminder" hidden>
+        <div class="remind-quick" id="remindQuick"></div>
+        <div class="remind-custom">
+          <div class="stepper" data-field="day"><button type="button" data-dir="-1" aria-label="Earlier day"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M6.4 1.8 3.2 5l3.2 3.2"/></svg></button><output id="remindDay"></output><button type="button" data-dir="1" aria-label="Later day"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.6 1.8 6.8 5 3.6 8.2"/></svg></button></div>
+          <div class="stepper" data-field="hour"><button type="button" data-dir="-1" aria-label="Earlier hour"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M6.4 1.8 3.2 5l3.2 3.2"/></svg></button><output id="remindHour"></output><button type="button" data-dir="1" aria-label="Later hour"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.6 1.8 6.8 5 3.6 8.2"/></svg></button></div><span class="remind-colon" aria-hidden="true">:</span><div class="stepper" data-field="minute"><button type="button" data-dir="-1" aria-label="Fewer minutes"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M6.4 1.8 3.2 5l3.2 3.2"/></svg></button><output id="remindMinute"></output><button type="button" data-dir="1" aria-label="More minutes"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.6 1.8 6.8 5 3.6 8.2"/></svg></button></div>
+          <button type="button" class="remind-set" id="remindSet">Set</button>
+        </div>
+      </div>
       <ul id="noteList" class="note-list"></ul>
       <p id="noteError" class="error" role="alert"></p>
     </section>

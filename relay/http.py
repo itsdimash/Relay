@@ -189,6 +189,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'notes': self.app.add_note(payload.get('text'), payload.get('kind'), payload.get('due'))}, 201)
             if path == '/api/notes/done':
                 return self.respond({'notes': self.app.set_note_done(payload.get('id'), payload.get('done'))})
+            if path == '/api/notes/snooze':
+                return self.respond({'notes': self.app.snooze_note(payload.get('id'), payload.get('minutes'))})
             if path == '/api/notes/reminded':
                 return self.respond({'notes': self.app.mark_reminded(payload.get('ids'))})
             if path == '/api/notes/remove':

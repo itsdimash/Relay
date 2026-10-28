@@ -5,7 +5,7 @@ import { createCollaboration } from './js/notch-collaboration.js';
 import { createActivity } from './js/notch-activity.js';
 import { createMusicFx, STYLES, DEFAULT_STYLE, isStyle } from './js/notch-music-fx.js';
 import { createBatteryWatcher } from './js/notch-battery.js';
-import { parseReminder, dueLabel, createReminderWatcher } from './js/notch-reminders.js';
+import { parseReminder, dueLabel, createReminderWatcher, quickChoices, startingMoment, stepMoment, canSet, dayLabel, hourText, minuteText } from './js/notch-reminders.js';
 
 const $ = id => document.getElementById(id);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -225,6 +225,7 @@ const VIEWS = ['music', 'notes', 'deliver', 'task', 'office'];
 let notes = [];
 let deliver = [];
 let noteBusy = false;
+let shownNotes = null; // ids of the notes drawn last time (null before the first draw, so the first list does not animate)
 let inputFocused = false;
 let holding = false;
 let music = null;
@@ -587,9 +588,13 @@ function noteItem(note) {
   if (note.kind === 'todo') {
     lead = document.createElement('input');
     lead.type = 'checkbox';
+    lead.className = 'note-check';
     lead.checked = !!note.done;
     lead.setAttribute('aria-label', `Done: ${note.text}`);
-    lead.addEventListener('change', () => changeNotes('/api/notes/done', { id: note.id, done: lead.checked }));
+    lead.addEventListener('change', () => {
+      li.classList.toggle('done', lead.checked); // the tick and the strike-through show at once; the list follows when the engine answers
+      changeNotes('/api/notes/done', { id: note.id, done: lead.checked });
+    });
   } else {
     lead = document.createElement('span');
     lead.classList.add('note-dot');
@@ -601,10 +606,21 @@ function noteItem(note) {
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'note-remove';
-  remove.textContent = '×';
+  remove.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>';
   remove.setAttribute('aria-label', `Delete: ${note.text}`);
   remove.addEventListener('click', () => changeNotes('/api/notes/remove', { id: note.id }));
   li.append(lead, text);
+  if (Number.isFinite(note.due) && note.reminded && !note.done) {
+    // A reminder that has gone off can be put off by ten minutes; it stays in view for the first hour, then only on hover.
+    const snooze = document.createElement('button');
+    snooze.type = 'button';
+    snooze.className = `note-snooze${Date.now() - note.due < 3600000 ? ' recent' : ''}`;
+    snooze.textContent = '+10 min';
+    snooze.title = 'Snooze 10 minutes';
+    snooze.setAttribute('aria-label', `Snooze: ${note.text}`);
+    snooze.addEventListener('click', () => changeNotes('/api/notes/snooze', { id: note.id, minutes: 10 }));
+    li.append(snooze);
+  }
   if (Number.isFinite(note.due)) {
     const due = document.createElement('span');
     due.className = `note-due${note.reminded ? ' passed' : ''}`;
@@ -621,13 +637,22 @@ function renderNotes() {
   const top = list.scrollTop;
   const ordered = [...notes].sort((a, b) => Number(!!a.done) - Number(!!b.done)); // open items first
   if (ordered.length) {
-    list.replaceChildren(...ordered.map(noteItem));
+    // Rows that were not on the screen before slide in; the ones already there stay still when something else changes.
+    const rows = ordered.map(note => {
+      const row = noteItem(note);
+      if (shownNotes && !shownNotes.has(note.id)) row.classList.add('enter');
+      return row;
+    });
+    list.replaceChildren(...rows);
   } else {
     const empty = document.createElement('li');
     empty.className = 'note-empty';
-    empty.textContent = 'Nothing yet.';
+    empty.innerHTML = '<span class="note-empty-icon"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="3" width="12" height="14" rx="2.2"/><path d="M7.2 7.6h5.6M7.2 11.2h3.6"/></svg></span><strong></strong><small></small>';
+    empty.querySelector('strong').textContent = 'Nothing yet.';
+    empty.querySelector('small').textContent = 'Try “call mom in 30 min” and Relay will remind you.';
     list.replaceChildren(empty);
   }
+  shownNotes = new Set(notes.map(note => note.id));
   list.scrollTop = top;
   const open = notes.filter(note => note.kind === 'todo' && !note.done).length;
   $('noteCount').textContent = String(open);
@@ -660,12 +685,16 @@ async function changeNotes(path, body) {
 async function addNote(kind) {
   const typed = $('noteInput').value.trim();
   if (!typed || noteBusy) return;
-  const reminder = parseReminder(typed);
+  // A time picked with the buttons wins; otherwise the words are read for one ("in 30 min", "tomorrow at 9:00").
+  const picked = pendingDue();
+  const reminder = picked ? { text: typed, due: picked } : parseReminder(typed);
   noteBusy = true;
   $('noteError').textContent = '';
   try {
     notes = (await post('/api/notes/add', reminder ? { text: reminder.text, kind, due: reminder.due } : { text: typed, kind })).notes;
     $('noteInput').value = '';
+    pending = null;
+    setRemind(false);
     showNoteHint();
     renderNotes();
     $('noteList').scrollTop = 0;
@@ -753,18 +782,88 @@ document.addEventListener('keydown', event => {
   }
 }, true);
 // While typing, the line under the field says what was understood as a time, before anything is saved.
-const NOTE_HINT = 'Enter saves a note · ⌘ Enter saves a to-do · add “in 30 min” or “tomorrow at 9:00” for a reminder';
+// pending: a time chosen with the buttons, kept until the note is saved. "minutes" counts from the moment of saving.
+let pending = null;
+const pendingDue = () => (pending ? (pending.minutes ? Date.now() + pending.minutes * 60000 : pending.at) : 0);
 function showNoteHint() {
   const hint = $('noteHint');
-  const reminder = parseReminder($('noteInput').value);
-  if (reminder) {
-    hint.textContent = `Reminder · ${dueLabel(reminder.due)}`;
-    hint.dataset.reminder = '';
-  } else {
-    hint.textContent = NOTE_HINT;
-    delete hint.dataset.reminder;
+  const due = pendingDue() || parseReminder($('noteInput').value)?.due;
+  if (due) hint.textContent = `Reminder · ${dueLabel(due)}`;
+  hint.hidden = !due;
+  hint.toggleAttribute('data-clearable', !!pending);
+  hint.title = pending ? 'Remove reminder' : '';
+  $('noteKeys').hidden = !!due;
+  document.querySelector('.composer').toggleAttribute('data-typing', !!$('noteInput').value);
+}
+$('noteHint').addEventListener('click', () => {
+  if (!pending) return;
+  pending = null;
+  showNoteHint();
+  $('noteInput').focus({ preventScroll: true });
+});
+
+// The reminder picker (the clock beside the field): a few ready-made times, and a time set by hand.
+const remindPop = $('remindPop');
+let custom = 0; // the moment the steppers show
+function paintCustom() {
+  const now = Date.now();
+  $('remindDay').textContent = dayLabel(custom, now);
+  $('remindHour').textContent = hourText(custom);
+  $('remindMinute').textContent = minuteText(custom);
+  $('remindSet').disabled = !canSet(custom, now);
+}
+function choose(choice) {
+  pending = choice;
+  setRemind(false);
+  showNoteHint();
+  $('noteInput').focus({ preventScroll: true });
+}
+function setRemind(open) {
+  remindPop.hidden = !open;
+  $('remindButton').setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  const now = Date.now();
+  $('remindQuick').replaceChildren(...quickChoices(now).map(choice => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'remind-chip';
+    const label = document.createElement('span');
+    label.textContent = choice.label;
+    button.append(label);
+    if (choice.time) {
+      const time = document.createElement('small');
+      time.textContent = choice.time;
+      button.append(time);
+    }
+    button.addEventListener('click', () => choose(choice.minutes ? { minutes: choice.minutes } : { at: choice.at }));
+    return button;
+  }));
+  custom = pending?.at && pending.at > now ? pending.at : startingMoment(now);
+  paintCustom();
+}
+$('remindButton').addEventListener('click', () => setRemind(remindPop.hidden));
+for (const stepper of remindPop.querySelectorAll('.stepper')) {
+  for (const button of stepper.querySelectorAll('button')) {
+    button.addEventListener('click', () => {
+      custom = stepMoment(custom, stepper.dataset.field, Number(button.dataset.dir));
+      paintCustom();
+    });
   }
 }
+$('remindSet').addEventListener('click', () => {
+  if (canSet(custom)) choose({ at: custom });
+});
+// Pressing a button here must not take the keyboard away from the note field.
+for (const element of [remindPop, $('remindButton'), $('noteHint')]) element.addEventListener('mousedown', event => event.preventDefault());
+document.addEventListener('pointerdown', event => {
+  if (!remindPop.hidden && !event.target.closest('#remindPop, #remindButton')) setRemind(false);
+});
+// Capture phase, like the menus: Escape closes the picker first, and only a second Escape hides the panel.
+document.addEventListener('keydown', event => {
+  if (remindPop.hidden || event.key !== 'Escape') return;
+  event.stopPropagation();
+  setRemind(false);
+}, true);
 $('noteInput').addEventListener('input', showNoteHint);
 $('noteInput').addEventListener('focus', () => { inputFocused = true; syncHold(); });
 $('noteInput').addEventListener('blur', () => { inputFocused = false; syncHold(); });
@@ -1223,6 +1322,7 @@ window.relayPanelMode = info => {
   $('panel').dataset.mode = mode;
   setFxPicker(false); // a freshly shown panel never starts with the picker open
   setMore(false);
+  setRemind(false);
   applyTabs(); // the window may have changed the tabs while the panel was away
   fx.setScene({ mode, view });
   updateGlow();

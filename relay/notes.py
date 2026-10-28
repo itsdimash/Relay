@@ -98,6 +98,23 @@ def due_reminders(app):
     ]
 
 
+def snooze(app, note_id, minutes):
+    """Moves a reminder that has gone off to a later time (counted from now) so it goes off again."""
+    if type(minutes) is not int or not 1 <= minutes <= 24 * 60:
+        raise ValueError('Snooze for between 1 minute and 24 hours.')
+    with app.LOCK:
+        notes = app.read_notes()
+        note = next((item for item in notes if item['id'] == note_id), None)
+        if note is None:
+            raise ValueError('That item no longer exists.')
+        if type(note.get('due')) is not int:
+            raise ValueError('That item has no reminder.')
+        note['due'] = int(time.time() * 1000) + minutes * 60000
+        note['reminded'] = False
+        app.write_notes(notes)
+        return notes
+
+
 def mark_reminded(app, ids):
     if not isinstance(ids, list) or len(ids) > 50 or not all(isinstance(item, str) for item in ids):
         raise ValueError('Send the ids of the reminders that were shown.')
