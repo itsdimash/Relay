@@ -64,10 +64,37 @@ class StartupTests(unittest.TestCase):
         self.assertIn('window.relayStartup', script)           # and answers with what is really saved
         handler = NATIVE.split('didReceiveScriptMessage', 1)[1].split('- (BOOL)isLocalDashboardURL', 1)[0]
         self.assertIn('isLocalDashboardURL:message.frameInfo.request.URL', handler)  # only Relay's own page may ask
-        self.assertIn('@[ @"login", @"window", @"hideDock" ]', handler)              # and only these names are accepted
+        self.assertIn('@[ @"login", @"window", @"hideDock", @"welcome" ]', handler)  # and only these names are accepted
         self.assertIn('setStartupSetting', handler)
         # the notch panel is untouched: these choices are not in it
         self.assertNotIn('startup', (ROOT / 'static' / 'notch.html').read_text().lower())
+
+
+class WelcomeTests(unittest.TestCase):
+    GLOW = (ROOT / 'packaging' / 'RelayNotchGlow.m').read_text()
+
+    def test_the_animation_plays_when_the_engine_is_up_unless_it_is_turned_off(self):
+        ready = NATIVE.split('- (void)engineReadyAtURL', 1)[1].split('- (void)buildWindowIfNeeded', 1)[0]
+        self.assertIn('[self.notch playWelcome]', ready)
+        self.assertIn('self.notch.enabled && [NSUserDefaults.standardUserDefaults boolForKey:RelayWelcomeKey]', ready)
+        self.assertIn('RelayWelcomeKey: @YES', NATIVE)                  # on by default
+
+    def test_turning_it_on_shows_it_once_as_a_preview(self):
+        branch = NATIVE.split('isEqualToString:@"welcome"', 1)[1].split('isEqualToString:@"window"', 1)[0]
+        self.assertIn('if (enabled) [self.notch playWelcome]', branch)
+
+    def test_the_animation_respects_reduced_motion_and_cleans_up_after_itself(self):
+        play = self.GLOW.split('- (void)playWelcome', 1)[1].split('- (void)hide', 1)[0]
+        self.assertIn('accessibilityDisplayShouldReduceMotion', play)
+        self.assertIn('removeFromSuperlayer', play)                      # nothing is left on screen
+        self.assertIn('if (![self prepare]) return', play)               # a Mac without a notch has nothing to outline
+        for role in ('observer', 'builder', 'reviewer'):                 # one ring per agent
+            self.assertIn(role, play)
+
+    def test_the_setting_is_in_the_window_and_the_menu(self):
+        self.assertIn('data-startup="welcome"', (ROOT / 'static' / 'index.html').read_text())
+        self.assertIn('Play an Animation When Relay Starts', NATIVE)
+        self.assertIn('@"welcome": @([defaults boolForKey:RelayWelcomeKey])', NATIVE)
 
 
 if __name__ == '__main__':

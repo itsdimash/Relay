@@ -5,6 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from .contracts import TERMINAL
+from . import battery
 from . import notch
 
 
@@ -83,6 +84,8 @@ class Handler(BaseHTTPRequestHandler):
             data['token'] = self.app.TOKEN
             data['queue'] = self.app.queue_snapshot()
             data['limits'] = self.app.limits.snapshot()
+            data['battery'] = battery.snapshot()
+            data['reminders'] = self.app.due_reminders()
             return self.respond(data)
         if path == '/api/storage':
             return self.respond(self.app.storage_usage())
@@ -115,7 +118,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'notch-music-fx', 'limits', 'appearance')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'notch-music-fx', 'notch-battery', 'notch-reminders', 'limits', 'appearance')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -183,9 +186,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.remove_project(payload.get('id'))
                 return self.respond({'ok': True})
             if path == '/api/notes/add':
-                return self.respond({'notes': self.app.add_note(payload.get('text'), payload.get('kind'))}, 201)
+                return self.respond({'notes': self.app.add_note(payload.get('text'), payload.get('kind'), payload.get('due'))}, 201)
             if path == '/api/notes/done':
                 return self.respond({'notes': self.app.set_note_done(payload.get('id'), payload.get('done'))})
+            if path == '/api/notes/reminded':
+                return self.respond({'notes': self.app.mark_reminded(payload.get('ids'))})
             if path == '/api/notes/remove':
                 return self.respond({'notes': self.app.remove_note(payload.get('id'))})
             if path == '/api/deliver/add':

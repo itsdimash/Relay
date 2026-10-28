@@ -8,6 +8,8 @@ extern NSString *const RelayNotchEnabledKey;
 // The person pressed "Open Relay" in the panel.
 - (void)notchPanelRequestsOpenRelay;
 - (void)notchPanelRequestsOpenRelayAt:(NSDictionary *)destination;
+// The person pressed "Quit Relay" in the panel's More menu.
+- (void)notchPanelRequestsQuit;
 @end
 
 @interface RelayNotchPanel : NSObject
@@ -20,4 +22,6 @@ extern NSString *const RelayNotchEnabledKey;
 - (void)showPinned;
 // Opens the panel and keeps it until toggled again, or closes it. Double-tapping the right Command key does this.
 - (void)toggle;
+// Relay has just started: a short light animation around the notch, so the person sees that it is running.
+- (void)playWelcome;
 @end

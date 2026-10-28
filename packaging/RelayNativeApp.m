@@ -19,6 +19,7 @@ static NSString *const RelayThemeChoiceKey = @"RelayThemeChoice";   // "system",
 static NSString *const RelayOpenWindowAtLaunchKey = @"RelayOpenWindowAtLaunch"; // YES: also open the main window when Relay starts (default NO)
 static NSString *const RelayHideDockKey = @"RelayHideDockWhenNotchOnly";        // YES: no Dock icon while only the notch is showing (default NO)
 static NSString *const RelayLaunchedBeforeKey = @"RelayLaunchedBefore";         // the very first start opens the window once, so a new person sees the app
+static NSString *const RelayWelcomeKey = @"RelayWelcomeAnimation";              // YES (default): a light animation around the notch when Relay starts
 
 static NSColor *RelayColor(unsigned int rgb) {
     return [NSColor colorWithRed:((rgb >> 16) & 0xff) / 255.0
@@ -95,6 +96,8 @@ static BOOL RelayMacIsDark(void) {
     withWindow.target = self;
     NSMenuItem *hideDock = [startupMenu addItemWithTitle:@"Hide the Dock Icon While Only the Notch Is Showing" action:@selector(toggleHideDock:) keyEquivalent:@""];
     hideDock.target = self;
+    NSMenuItem *welcome = [startupMenu addItemWithTitle:@"Play an Animation When Relay Starts" action:@selector(toggleWelcome:) keyEquivalent:@""];
+    welcome.target = self;
     startupItem.submenu = startupMenu;
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Hide Relay" action:@selector(hide:) keyEquivalent:@"h"];
@@ -167,6 +170,10 @@ static BOOL RelayMacIsDark(void) {
         item.state = [defaults boolForKey:RelayOpenWindowAtLaunchKey] ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
+    if (item.action == @selector(toggleWelcome:)) {
+        item.state = [defaults boolForKey:RelayWelcomeKey] ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (item.action == @selector(toggleHideDock:)) {
         item.state = [defaults boolForKey:RelayHideDockKey] ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
@@ -185,6 +192,10 @@ static BOOL RelayMacIsDark(void) {
     [self showMainWindow];
 }
 
+- (void)notchPanelRequestsQuit {
+    [NSApp terminate:nil];
+}
+
 #pragma mark - Startup settings
 
 // The three choices of the Startup menu in the Relay menu. The dashboard's Startup button shows and changes the same ones.
@@ -192,7 +203,8 @@ static BOOL RelayMacIsDark(void) {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     return @{ @"login": @(SMAppService.mainAppService.status == SMAppServiceStatusEnabled),
               @"window": @([defaults boolForKey:RelayOpenWindowAtLaunchKey]),
-              @"hideDock": @([defaults boolForKey:RelayHideDockKey]) };
+              @"hideDock": @([defaults boolForKey:RelayHideDockKey]),
+              @"welcome": @([defaults boolForKey:RelayWelcomeKey]) };
 }
 
 - (void)pushStartupSettings {
@@ -207,6 +219,9 @@ static BOOL RelayMacIsDark(void) {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     if ([name isEqualToString:@"login"]) {
         [self setLaunchAtLogin:enabled];
+    } else if ([name isEqualToString:@"welcome"]) {
+        [defaults setBool:enabled forKey:RelayWelcomeKey];
+        if (enabled) [self.notch playWelcome]; // a preview, so the person sees what they turned on
     } else if ([name isEqualToString:@"window"]) {
         [defaults setBool:enabled forKey:RelayOpenWindowAtLaunchKey];
     } else if ([name isEqualToString:@"hideDock"]) {
@@ -218,6 +233,10 @@ static BOOL RelayMacIsDark(void) {
 - (void)toggleOpenWindowAtLaunch:(id)sender {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     [defaults setBool:![defaults boolForKey:RelayOpenWindowAtLaunchKey] forKey:RelayOpenWindowAtLaunchKey];
+}
+
+- (void)toggleWelcome:(id)sender {
+    [self setStartupSetting:@"welcome" enabled:![NSUserDefaults.standardUserDefaults boolForKey:RelayWelcomeKey]];
 }
 
 - (void)toggleHideDock:(id)sender {
@@ -511,6 +530,10 @@ static BOOL RelayMacIsDark(void) {
         NSURL *notchURL = [NSURL URLWithString:@"notch" relativeToURL:url].absoluteURL;
         self.notch = [[RelayNotchPanel alloc] initWithPageURL:notchURL];
         self.notch.delegate = self;
+        // So that the person notices Relay is running, now that only the notch starts: a short light around it.
+        if (self.notch.enabled && [NSUserDefaults.standardUserDefaults boolForKey:RelayWelcomeKey]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self.notch playWelcome]; });
+        }
     }
     if (self.wantsWindow || !self.notch.enabled) [self showMainWindow];
     [self applyActivationPolicy];
@@ -577,7 +600,7 @@ static BOOL RelayMacIsDark(void) {
     } else if ([body[@"type"] isEqual:@"startup"]) {
         // The dashboard's Startup menu. With a name it changes one choice; without, it only asks for the current ones.
         NSString *name = [body[@"name"] isKindOfClass:NSString.class] ? body[@"name"] : @"";
-        if ([@[ @"login", @"window", @"hideDock" ] containsObject:name] && [body[@"on"] isKindOfClass:NSNumber.class]) {
+        if ([@[ @"login", @"window", @"hideDock", @"welcome" ] containsObject:name] && [body[@"on"] isKindOfClass:NSNumber.class]) {
             [self setStartupSetting:name enabled:[body[@"on"] boolValue]];
         }
         [self pushStartupSettings];
@@ -741,7 +764,7 @@ int main(int argc, const char *argv[]) {
         app.delegate = RelayApplicationDelegate;
 
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-        [defaults registerDefaults:@{RelayNotchEnabledKey: @YES, RelayOpenWindowAtLaunchKey: @NO, RelayHideDockKey: @NO}];
+        [defaults registerDefaults:@{RelayNotchEnabledKey: @YES, RelayOpenWindowAtLaunchKey: @NO, RelayHideDockKey: @NO, RelayWelcomeKey: @YES}];
         // Someone who has used Relay before has a saved theme; only a brand new install has neither it nor the launched-before mark.
         BOOL firstStart = ![defaults objectForKey:RelayLaunchedBeforeKey] && ![defaults objectForKey:RelayThemeChoiceKey];
         BOOL opensWindow = firstStart || [defaults boolForKey:RelayOpenWindowAtLaunchKey] || ![defaults boolForKey:RelayNotchEnabledKey];

@@ -341,6 +341,97 @@ static NSColor *AgentColor(NSString *role) {
     [CATransaction commit];
 }
 
+#pragma mark - Welcome
+
+// One animation that starts later and keeps its last value, so a layer stays hidden until its turn and is gone after it.
+- (CABasicAnimation *)once:(NSString *)keyPath from:(id)from to:(id)to at:(double)start duration:(NSTimeInterval)duration ease:(NSString *)ease {
+    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:keyPath];
+    animation.fromValue = from;
+    animation.toValue = to;
+    animation.duration = duration;
+    animation.beginTime = start;
+    animation.timingFunction = [CAMediaTimingFunction functionWithName:ease];
+    animation.fillMode = kCAFillModeForwards;
+    animation.removedOnCompletion = NO;
+    return animation;
+}
+
+- (void)playWelcome {
+    if (![self prepare]) return; // no notch on this Mac: nothing to outline
+    BOOL reduced = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
+    CGPathRef path = self.outline.path;
+    CGRect bounds = self.outline.frame;
+    NSColor *brand = AgentColor(nil);
+    double now = [self.root convertTime:CACurrentMediaTime() fromLayer:nil];
+    NSMutableArray<CALayer *> *added = [NSMutableArray array];
+
+    if (!self.visible) {
+        self.window.alphaValue = 1; // the glow itself is off right now: the welcome lights the window by itself
+        [self.window orderFrontRegardless];
+    }
+
+    // The line: starts as a point in the middle of the notch's lower edge and runs up both sides to the screen edge.
+    CAShapeLayer *line = [self shapeLayerWithWidth:2.4];
+    line.frame = bounds;
+    line.path = path;
+    line.strokeColor = Brighter(brand, 0.7).CGColor;
+    line.shadowColor = brand.CGColor;
+    line.shadowRadius = 10;
+    [self.root addSublayer:line];
+    [added addObject:line];
+
+    if (reduced) {
+        line.opacity = 0;
+        [line addAnimation:[self once:@"opacity" from:@0 to:@1 at:now duration:0.5 ease:kCAMediaTimingFunctionEaseInEaseOut] forKey:@"in"];
+        [line addAnimation:[self once:@"opacity" from:@1 to:@0 at:now + 1.0 duration:0.6 ease:kCAMediaTimingFunctionEaseInEaseOut] forKey:@"out"];
+    } else {
+        line.strokeStart = 0.5; // the path is symmetric, so 0.5 is the middle of the bottom edge
+        line.strokeEnd = 0.5;
+        [line addAnimation:[self once:@"strokeStart" from:@0.5 to:@0 at:now duration:0.75 ease:kCAMediaTimingFunctionEaseOut] forKey:@"left"];
+        [line addAnimation:[self once:@"strokeEnd" from:@0.5 to:@1 at:now duration:0.75 ease:kCAMediaTimingFunctionEaseOut] forKey:@"right"];
+        [line addAnimation:[self once:@"opacity" from:@1 to:@0 at:now + 1.1 duration:0.8 ease:kCAMediaTimingFunctionEaseInEaseOut] forKey:@"out"];
+
+        // A soft bloom of light as the line closes, then it fades with the rest.
+        CAShapeLayer *bloom = [self shapeLayerWithWidth:7];
+        bloom.frame = bounds;
+        bloom.path = path;
+        bloom.strokeColor = brand.CGColor;
+        bloom.shadowColor = brand.CGColor;
+        bloom.shadowRadius = 30;
+        bloom.opacity = 0;
+        [self.root insertSublayer:bloom below:line];
+        [added addObject:bloom];
+        [bloom addAnimation:[self once:@"opacity" from:@0 to:@0.85 at:now + 0.5 duration:0.3 ease:kCAMediaTimingFunctionEaseOut] forKey:@"in"];
+        [bloom addAnimation:[self once:@"opacity" from:@0.85 to:@0 at:now + 0.8 duration:1.0 ease:kCAMediaTimingFunctionEaseInEaseOut] forKey:@"out"];
+        [bloom addAnimation:[self once:@"shadowRadius" from:@10 to:@44 at:now + 0.5 duration:1.3 ease:kCAMediaTimingFunctionEaseOut] forKey:@"swell"];
+
+        // Three rings, one per agent (Observer, Builder, Reviewer), spread out one after the other.
+        NSArray *roles = @[ @"observer", @"builder", @"reviewer" ];
+        for (NSInteger i = 0; i < 3; i++) {
+            NSColor *colour = AgentColor(roles[i]);
+            CAShapeLayer *ring = [self shapeLayerWithWidth:2.5];
+            ring.frame = bounds;
+            ring.path = path;
+            ring.strokeColor = Brighter(colour, 0.15).CGColor;
+            ring.shadowColor = colour.CGColor;
+            ring.shadowRadius = 14;
+            ring.opacity = 0;
+            [self.root addSublayer:ring];
+            [added addObject:ring];
+            double start = now + 0.6 + 0.16 * i;
+            [ring addAnimation:[self once:@"lineWidth" from:@2.5 to:@24 at:start duration:0.95 ease:kCAMediaTimingFunctionEaseOut] forKey:@"grow"];
+            [ring addAnimation:[self once:@"opacity" from:@0.85 to:@0 at:start duration:0.95 ease:kCAMediaTimingFunctionEaseOut] forKey:@"fade"];
+        }
+    }
+
+    __weak RelayNotchGlow *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        for (CALayer *layer in added) [layer removeFromSuperlayer];
+        RelayNotchGlow *strongSelf = weakSelf;
+        if (strongSelf && !strongSelf.visible) [strongSelf.window orderOut:nil]; // music or agents did not take the light over
+    });
+}
+
 - (void)hide {
     self.wantKind = RelayGlowKindNone;
     self.wantActor = nil;

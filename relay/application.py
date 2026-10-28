@@ -100,6 +100,8 @@ class Application:
     add_note = notes.add_note
     set_note_done = notes.set_done
     remove_note = notes.remove_note
+    due_reminders = notes.due_reminders
+    mark_reminded = notes.mark_reminded
 
     queue_snapshot = task_queue.queue_snapshot
     add_queued_task = task_queue.add_task

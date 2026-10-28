@@ -4,6 +4,8 @@ import { limitRow } from './js/limits.js';
 import { createCollaboration } from './js/notch-collaboration.js';
 import { createActivity } from './js/notch-activity.js';
 import { createMusicFx, STYLES, DEFAULT_STYLE, isStyle } from './js/notch-music-fx.js';
+import { createBatteryWatcher } from './js/notch-battery.js';
+import { parseReminder, dueLabel, createReminderWatcher } from './js/notch-reminders.js';
 
 const $ = id => document.getElementById(id);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -159,6 +161,10 @@ for (const id of ['fxOpen', 'fxCustomize']) {
     setFxPicker($('fxPicker').hidden);
   });
 }
+$('fxClose').addEventListener('click', () => {
+  setFxPicker(false);
+  fxOpener.focus({ preventScroll: true });
+});
 $('fxTabPanel').addEventListener('click', () => setFxTab('panel'));
 $('fxTabScreen').addEventListener('click', () => setFxTab('screen'));
 document.addEventListener('pointerdown', event => {
@@ -351,11 +357,14 @@ const ICONS = {
   alert: '<svg viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4M12 17h.01"/></svg>',
   cross: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
   sync: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.5-4M4 13a8 8 0 0 0 14.5 4M4 4.5V8h3.5M20 19.5V16h-3.5"/></svg>',
-  spark: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>'
+  spark: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>',
+  bolt: '<svg viewBox="0 0 24 24"><path d="M13 3 5.5 13.5H11L10 21l7.5-10.5H12z"/></svg>',
+  battery: '<svg viewBox="0 0 24 24"><rect x="3" y="8" width="16" height="9" rx="2.2"/><path d="M21.5 11v3M6.5 11.5v2"/></svg>'
 };
 const TOASTS = {
   start: { icon: 'play' }, approve: { icon: 'bell' }, question: { icon: 'help' }, approved: { icon: 'check' },
-  done: { icon: 'check', burst: true }, attention: { icon: 'alert' }, failed: { icon: 'cross' }, retry: { icon: 'sync' }, decision: { icon: 'spark' }
+  done: { icon: 'check', burst: true }, attention: { icon: 'alert' }, failed: { icon: 'cross' }, retry: { icon: 'sync' }, decision: { icon: 'spark' },
+  charging: { icon: 'bolt' }, lowbattery: { icon: 'battery' }, reminder: { icon: 'bell' }
 };
 let toastTimer = null;
 let toastLeave = null;
@@ -399,6 +408,34 @@ function toast(kind, title, detail = '') {
     toastLeave = setTimeout(() => { box.hidden = true; box.removeAttribute('data-show'); box.removeAttribute('data-leaving'); burst.replaceChildren(); }, reducedMotion ? 0 : 280);
   }, spec.burst ? 4200 : 3400);
 }
+
+// Battery: the engine reads it from macOS. The person can turn the alerts off in the Relay window (Notch menu).
+const batteryAlertsOn = () => {
+  try {
+    return localStorage.getItem('relay.batteryAlerts') !== 'off';
+  } catch (_) {
+    return true;
+  }
+};
+const batteryWatcher = createBatteryWatcher({
+  enabled: batteryAlertsOn,
+  announce: message => {
+    toast(message.kind, message.title, message.detail);
+    tell({ type: 'attention', keep: false }); // the panel peeks out for a moment
+  }
+});
+
+// Reminders: a note with a time ("in 30 min", "tomorrow at 9:00") is kept by the engine, which says on every poll which ones
+// are due. The panel slides out on the Notes for a few seconds, longer than for other banners.
+const reminderWatcher = createReminderWatcher({
+  announce: message => {
+    toast(message.kind, message.title, message.detail);
+    if (current?.plan) tell({ type: 'attention', keep: true }); // a plan waiting for an answer needs the big panel anyway
+    else tell({ type: 'reminder' });                           // otherwise the small panel opens on the Notes for a while
+    loadNotes();
+  },
+  acknowledge: ids => post('/api/notes/reminded', { ids }).then(result => { if (Array.isArray(result.notes)) { notes = result.notes; renderNotes(); } })
+});
 
 const announced = { id: '', status: '', event: -1, first: true };
 const brief = (text, limit = 90) => {
@@ -465,6 +502,8 @@ async function poll() {
     if (JSON.stringify(current) !== before) render(current);
     announce(current);
     renderLimits(data.limits);
+    batteryWatcher.update(data.battery);
+    reminderWatcher.update(data.reminders);
     activity.update(data.queue, current);
     notifyNative(current);
   } catch (_) {
@@ -500,13 +539,19 @@ async function decide(path, body) {
 // Views: Music, Notes, Deliver, Task and (in the full panel only) Office.
 const tabs = { music: $('tabMusic'), notes: $('tabNotes'), deliver: $('tabDeliver'), task: $('tabTask'), office: $('tabOffice') };
 
+// Tabs the person hid (Notch menu in the Relay window). The Task tab always stays: plans wait there for approval.
+const TAB_KEY = 'relay.notchTabs';
+let hiddenTabs = new Set();
+const shown = name => !hiddenTabs.has(name);
+
 function fallbackView() {
-  return chosenView;
+  if (shown(chosenView)) return chosenView;
+  return ['notes', 'music', 'deliver', 'task'].find(shown) || 'task';
 }
 
 function setView(next, { focus = true } = {}) {
   if (next === 'notes' && current?.plan) next = 'task'; // a waiting plan always comes first
-  if (!VIEWS.includes(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
+  if (!VIEWS.includes(next) || !shown(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
   view = next;
   $('panel').dataset.view = view;
   fx.setScene({ mode, view });
@@ -559,7 +604,15 @@ function noteItem(note) {
   remove.textContent = '×';
   remove.setAttribute('aria-label', `Delete: ${note.text}`);
   remove.addEventListener('click', () => changeNotes('/api/notes/remove', { id: note.id }));
-  li.append(lead, text, remove);
+  li.append(lead, text);
+  if (Number.isFinite(note.due)) {
+    const due = document.createElement('span');
+    due.className = `note-due${note.reminded ? ' passed' : ''}`;
+    due.textContent = dueLabel(note.due);
+    due.title = new Date(note.due).toLocaleString();
+    li.append(due);
+  }
+  li.append(remove);
   return li;
 }
 
@@ -605,13 +658,15 @@ async function changeNotes(path, body) {
 }
 
 async function addNote(kind) {
-  const text = $('noteInput').value.trim();
-  if (!text || noteBusy) return;
+  const typed = $('noteInput').value.trim();
+  if (!typed || noteBusy) return;
+  const reminder = parseReminder(typed);
   noteBusy = true;
   $('noteError').textContent = '';
   try {
-    notes = (await post('/api/notes/add', { text, kind })).notes;
+    notes = (await post('/api/notes/add', reminder ? { text: reminder.text, kind, due: reminder.due } : { text: typed, kind })).notes;
     $('noteInput').value = '';
+    showNoteHint();
     renderNotes();
     $('noteList').scrollTop = 0;
   } catch (error) {
@@ -637,6 +692,80 @@ function pickTab(name) {
 }
 
 for (const [name, tab] of Object.entries(tabs)) tab.addEventListener('click', () => pickTab(name));
+
+function applyTabs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TAB_KEY) || 'null');
+    hiddenTabs = new Set((Array.isArray(saved?.hidden) ? saved.hidden : []).filter(name => VIEWS.includes(name) && name !== 'task'));
+  } catch (_) {
+    hiddenTabs = new Set();
+  }
+  for (const [name, tab] of Object.entries(tabs)) tab.hidden = hiddenTabs.has(name);
+  if (hiddenTabs.has(view)) setView(fallbackView(), { focus: false });
+}
+// The Relay window and this panel are separate pages; a change made in the window reaches the panel here.
+window.addEventListener('storage', event => { if (event.key === TAB_KEY) applyTabs(); });
+
+// More: a small menu with the two things that have no tab. It only exists in the app; a browser has nothing to quit.
+const moreButton = $('moreButton');
+const moreMenu = $('moreMenu');
+moreButton.hidden = !native;
+let quitArmed = false; // a task is running, so the first press on Quit only asks
+function paintQuit() {
+  $('quitLabel').hidden = quitArmed;
+  $('quitConfirm').hidden = !quitArmed;
+}
+function setMore(open) {
+  moreMenu.hidden = !open;
+  moreButton.setAttribute('aria-expanded', String(open));
+  quitArmed = false;
+  paintQuit();
+  if (open) $('moreOpen').focus({ preventScroll: true });
+}
+moreButton.addEventListener('click', () => setMore(moreMenu.hidden));
+$('moreOpen').addEventListener('click', () => {
+  setMore(false);
+  tell({ type: 'open' });
+});
+$('moreQuit').addEventListener('click', () => {
+  if (current?.running && !quitArmed) {
+    quitArmed = true;
+    paintQuit();
+    return;
+  }
+  setMore(false);
+  tell({ type: 'quit' });
+});
+document.addEventListener('pointerdown', event => {
+  if (!moreMenu.hidden && !event.target.closest('#moreMenu, #moreButton')) setMore(false);
+});
+// Capture phase: Escape closes the menu first, and only a second Escape hides the whole panel.
+document.addEventListener('keydown', event => {
+  if (moreMenu.hidden) return;
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    setMore(false);
+    moreButton.focus({ preventScroll: true });
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const items = [$('moreOpen'), $('moreQuit')];
+    items[(items.indexOf(document.activeElement) + 1) % items.length].focus({ preventScroll: true });
+  }
+}, true);
+// While typing, the line under the field says what was understood as a time, before anything is saved.
+const NOTE_HINT = 'Enter saves a note · ⌘ Enter saves a to-do · add “in 30 min” or “tomorrow at 9:00” for a reminder';
+function showNoteHint() {
+  const hint = $('noteHint');
+  const reminder = parseReminder($('noteInput').value);
+  if (reminder) {
+    hint.textContent = `Reminder · ${dueLabel(reminder.due)}`;
+    hint.dataset.reminder = '';
+  } else {
+    hint.textContent = NOTE_HINT;
+    delete hint.dataset.reminder;
+  }
+}
+$('noteInput').addEventListener('input', showNoteHint);
 $('noteInput').addEventListener('focus', () => { inputFocused = true; syncHold(); });
 $('noteInput').addEventListener('blur', () => { inputFocused = false; syncHold(); });
 $('noteInput').addEventListener('keydown', event => {
@@ -1093,6 +1222,8 @@ window.relayPanelMode = info => {
   mode = next;
   $('panel').dataset.mode = mode;
   setFxPicker(false); // a freshly shown panel never starts with the picker open
+  setMore(false);
+  applyTabs(); // the window may have changed the tabs while the panel was away
   fx.setScene({ mode, view });
   updateGlow();
   // A new appearance starts without the keyboard: typing begins only when the person clicks the note field.
@@ -1134,6 +1265,7 @@ window.addEventListener('pagehide', () => {
 render(null);
 renderMusic();
 renderDeliver();
+applyTabs();
 setView('notes', { focus: false });
 loadNotes();
 loadDeliver();

@@ -29,6 +29,7 @@ static const CGFloat DragZoneMargin = 170;    // and this much to each side of t
 static const NSTimeInterval ShowDelay = 0.15; // the pointer must rest in the hot zone this long
 static const NSTimeInterval HideDelay = 0.45; // grace period after the pointer leaves the panel
 static const NSTimeInterval DoneVisibleSeconds = 7.0;
+static const NSTimeInterval ReminderVisibleSeconds = 14.0; // a reminder stays longer: the person may have looked away
 static const NSTimeInterval TapMaxHold = 0.30;    // a Command "tap" is pressed and released within this time
 static const NSTimeInterval DoubleTapWindow = 0.45; // two taps within this time toggle the panel
 static const CGEventFlags RightCommandMask = 0x00000010; // device-dependent bit for the right Command key
@@ -427,6 +428,10 @@ static NSColor *DominantColor(NSString *dataURL) {
                     completionHandler:nil];
 }
 
+- (void)playWelcome {
+    [self.glow playWelcome];
+}
+
 #pragma mark - Window
 
 - (void)buildWindow {
@@ -768,12 +773,21 @@ static NSColor *DominantColor(NSString *dataURL) {
 
 // A task finished or failed: peek in for a few seconds, then leave unless the pointer is on the panel.
 - (void)peek {
+    [self peekView:@"task" seconds:DoneVisibleSeconds];
+}
+
+// A note's reminder time has come: the small panel opens on the Notes, with the reminder banner, and stays a little longer.
+- (void)peekReminder {
+    [self peekView:@"notes" seconds:ReminderVisibleSeconds];
+}
+
+- (void)peekView:(NSString *)view seconds:(NSTimeInterval)seconds {
     if (!self.enabled) return;
     [self cancelTimer:&_pillTimer];
-    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:@"task"];
+    [self showOnScreen:[self screenForPoint:NSEvent.mouseLocation] mode:RelayPanelModeCompact view:view];
     [self cancelTimer:&_doneTimer];
     __weak RelayNotchPanel *weakSelf = self;
-    self.doneTimer = [NSTimer scheduledTimerWithTimeInterval:DoneVisibleSeconds repeats:NO block:^(NSTimer *timer) {
+    self.doneTimer = [NSTimer scheduledTimerWithTimeInterval:seconds repeats:NO block:^(NSTimer *timer) {
         RelayNotchPanel *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.pinned || strongSelf.holding) return;
         if (![strongSelf pointerIsNearPanel]) [strongSelf hideAnimated:YES];
@@ -1097,8 +1111,14 @@ static NSColor *DominantColor(NSString *dataURL) {
             [self.delegate notchPanelRequestsOpenRelay];
         }
         [self hideAnimated:YES];
+    } else if ([type isEqualToString:@"quit"]) {
+        // Quit goes through the app, which waits for the engine to save a running task before it exits.
+        [self hideAnimated:YES];
+        [self.delegate notchPanelRequestsQuit];
     } else if ([type isEqualToString:@"hide"]) {
         [self hideAnimated:YES];
+    } else if ([type isEqualToString:@"reminder"]) {
+        [self peekReminder];
     } else if ([type isEqualToString:@"attention"]) {
         if ([body[@"keep"] boolValue]) [self showPinned];
         else [self peek];

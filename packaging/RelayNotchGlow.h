@@ -15,6 +15,10 @@
 - (void)showAgentActor:(NSString *)actor;
 // A one-time ripple of light: a new track, or a new agent taking over.
 - (void)burst;
+// Relay has just started: a thin line draws itself along the notch from the middle outwards, a bloom of light follows,
+// and three rings (one per agent) spread out and fade. About two seconds, once, whatever the glow style is.
+// With reduced motion it is a plain fade of the line. Does nothing on a Mac without a notch.
+- (void)playWelcome;
 // Fades everything out.
 - (void)hide;
 // The notch screen was plugged in, unplugged or changed resolution.
