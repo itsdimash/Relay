@@ -3,6 +3,7 @@
 // shows the dashboard in a native window, and stops the engine when the app quits.
 #import <Cocoa/Cocoa.h>
 #include <signal.h>
+#import <ServiceManagement/ServiceManagement.h>
 #import <WebKit/WebKit.h>
 #import "RelayNotchPanel.h"
 
@@ -13,6 +14,11 @@ static NSString *const RelaySkipMoveKey = @"RelaySkipMoveToApplications";
 
 static NSString *const RelayNightWindowKey = @"RelayNightWindow";   // the theme the dashboard showed last, so the window opens in it
 static NSString *const RelayThemeChoiceKey = @"RelayThemeChoice";   // "system", "light" or "night"
+
+// Startup. Relay is a notch app first: it starts with the notch only, and the window opens when the person asks for it.
+static NSString *const RelayOpenWindowAtLaunchKey = @"RelayOpenWindowAtLaunch"; // YES: also open the main window when Relay starts (default NO)
+static NSString *const RelayHideDockKey = @"RelayHideDockWhenNotchOnly";        // YES: no Dock icon while only the notch is showing (default NO)
+static NSString *const RelayLaunchedBeforeKey = @"RelayLaunchedBefore";         // the very first start opens the window once, so a new person sees the app
 
 static NSColor *RelayColor(unsigned int rgb) {
     return [NSColor colorWithRed:((rgb >> 16) & 0xff) / 255.0
@@ -42,6 +48,10 @@ static BOOL RelayMacIsDark(void) {
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSURL *serverURL;
 @property(nonatomic, strong) RelayNotchPanel *notch;
+@property(nonatomic, strong) NSStatusItem *statusItem;   // only while the Dock icon is hidden: the way back in, and Quit
+@property(nonatomic) BOOL opensWindowAtLaunch;           // decided in main(), before the app runs
+@property(nonatomic) BOOL wantsWindow;                   // the window was asked for before the engine was ready
+@property(nonatomic, copy) NSString *pendingHash;        // where the window should open, when it is built for a notch shortcut
 @property(nonatomic) BOOL ready;
 @property(nonatomic) BOOL triedPreferredPort;
 @property(nonatomic) BOOL quitting;
@@ -63,6 +73,7 @@ static BOOL RelayMacIsDark(void) {
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [self buildMenu];
+    self.wantsWindow = self.opensWindowAtLaunch;
     if ([self offerToMoveToApplications]) return;
     [self startServerOnPort:RelayPreferredPort];
 }
@@ -74,6 +85,17 @@ static BOOL RelayMacIsDark(void) {
     [mainMenu addItem:appItem];
     NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"Relay"];
     [appMenu addItemWithTitle:@"About Relay" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *startupItem = [appMenu addItemWithTitle:@"Startup" action:nil keyEquivalent:@""];
+    NSMenu *startupMenu = [[NSMenu alloc] initWithTitle:@"Startup"];
+    NSMenuItem *atLogin = [startupMenu addItemWithTitle:@"Open Relay at Login" action:@selector(toggleLaunchAtLogin:) keyEquivalent:@""];
+    atLogin.target = self;
+    NSMenuItem *withWindow = [startupMenu addItemWithTitle:@"Open the Window When Relay Starts" action:@selector(toggleOpenWindowAtLaunch:) keyEquivalent:@""];
+    withWindow.target = self;
+    NSMenuItem *hideDock = [startupMenu addItemWithTitle:@"Hide the Dock Icon While Only the Notch Is Showing" action:@selector(toggleHideDock:) keyEquivalent:@""];
+    hideDock.target = self;
+    startupItem.submenu = startupMenu;
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Hide Relay" action:@selector(hide:) keyEquivalent:@"h"];
     NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
@@ -136,6 +158,19 @@ static BOOL RelayMacIsDark(void) {
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (item.action == @selector(toggleLaunchAtLogin:)) {
+        item.state = SMAppService.mainAppService.status == SMAppServiceStatusEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleOpenWindowAtLaunch:)) {
+        item.state = [defaults boolForKey:RelayOpenWindowAtLaunchKey] ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (item.action == @selector(toggleHideDock:)) {
+        item.state = [defaults boolForKey:RelayHideDockKey] ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (item.action == @selector(toggleNotchPanel:)) {
         item.state = self.notch.enabled ? NSControlStateValueOn : NSControlStateValueOff;
         return self.notch != nil;
@@ -150,6 +185,128 @@ static BOOL RelayMacIsDark(void) {
     [self showMainWindow];
 }
 
+#pragma mark - Startup settings
+
+// The three choices of the Startup menu in the Relay menu. The dashboard's Startup button shows and changes the same ones.
+- (NSDictionary<NSString *, NSNumber *> *)startupSettings {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    return @{ @"login": @(SMAppService.mainAppService.status == SMAppServiceStatusEnabled),
+              @"window": @([defaults boolForKey:RelayOpenWindowAtLaunchKey]),
+              @"hideDock": @([defaults boolForKey:RelayHideDockKey]) };
+}
+
+- (void)pushStartupSettings {
+    [self.webView callAsyncJavaScript:@"if (window.relayStartup) window.relayStartup(settings);"
+                            arguments:@{ @"settings": [self startupSettings] }
+                              inFrame:nil
+                       inContentWorld:WKContentWorld.pageWorld
+                    completionHandler:nil];
+}
+
+- (void)setStartupSetting:(NSString *)name enabled:(BOOL)enabled {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([name isEqualToString:@"login"]) {
+        [self setLaunchAtLogin:enabled];
+    } else if ([name isEqualToString:@"window"]) {
+        [defaults setBool:enabled forKey:RelayOpenWindowAtLaunchKey];
+    } else if ([name isEqualToString:@"hideDock"]) {
+        [defaults setBool:enabled forKey:RelayHideDockKey];
+        [self applyActivationPolicy];
+    }
+}
+
+- (void)toggleOpenWindowAtLaunch:(id)sender {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setBool:![defaults boolForKey:RelayOpenWindowAtLaunchKey] forKey:RelayOpenWindowAtLaunchKey];
+}
+
+- (void)toggleHideDock:(id)sender {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setBool:![defaults boolForKey:RelayHideDockKey] forKey:RelayHideDockKey];
+    [self applyActivationPolicy];
+}
+
+// "Open Relay at Login" is a normal macOS login item. It is listed in System Settings › General › Login Items.
+- (void)toggleLaunchAtLogin:(id)sender {
+    [self setLaunchAtLogin:SMAppService.mainAppService.status != SMAppServiceStatusEnabled];
+}
+
+- (void)setLaunchAtLogin:(BOOL)on {
+    SMAppService *service = SMAppService.mainAppService;
+    BOOL wasOn = service.status == SMAppServiceStatusEnabled;
+    if (on == wasOn) return;
+    NSError *error = nil;
+    BOOL done = wasOn ? [service unregisterAndReturnError:&error] : [service registerAndReturnError:&error];
+    if (!done) {
+        [NSApp activateIgnoringOtherApps:YES];
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = wasOn ? @"Relay could not be removed from your login items." : @"Relay could not be added to your login items.";
+        alert.informativeText = [NSString stringWithFormat:@"You can change it yourself in System Settings › General › Login Items. %@", error.localizedDescription ?: @""];
+        [alert runModal];
+        return;
+    }
+    if (!wasOn && service.status == SMAppServiceStatusRequiresApproval) {
+        [NSApp activateIgnoringOtherApps:YES];
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Allow Relay in Login Items.";
+        alert.informativeText = @"macOS needs your approval first. Turn Relay on in System Settings › General › Login Items.";
+        [alert addButtonWithTitle:@"Open Login Items"];
+        [alert addButtonWithTitle:@"Not Now"];
+        if ([alert runModal] == NSAlertFirstButtonReturn) [SMAppService openSystemSettingsLoginItems];
+    }
+}
+
+#pragma mark - Dock icon and menu bar item
+
+// The Dock icon stays while the window is open. With the notch only, it can go (a setting), and a small menu bar item
+// takes its place: the way back to the window, and Quit. Without either, Relay would have no way to be opened or quit.
+- (void)applyActivationPolicy {
+    BOOL windowShown = self.window && (self.window.visible || self.window.miniaturized);
+    BOOL hideDock = !windowShown && self.notch.enabled && [NSUserDefaults.standardUserDefaults boolForKey:RelayHideDockKey];
+    NSApplicationActivationPolicy wanted = hideDock ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular;
+    if (NSApp.activationPolicy != wanted) [NSApp setActivationPolicy:wanted];
+    [self showStatusItem:hideDock];
+}
+
+- (void)showStatusItem:(BOOL)show {
+    if (!show) {
+        if (self.statusItem) [NSStatusBar.systemStatusBar removeStatusItem:self.statusItem];
+        self.statusItem = nil;
+        return;
+    }
+    if (self.statusItem) return;
+    NSStatusItem *item = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
+    NSURL *iconURL = [NSBundle.mainBundle URLForResource:@"relay-status" withExtension:@"png"];
+    NSImage *icon = iconURL ? [[NSImage alloc] initWithContentsOfURL:iconURL] : nil;
+    if (icon) {
+        icon.size = NSMakeSize(18, 18);
+        item.button.image = icon;
+    } else {
+        item.button.title = @"Relay";
+    }
+    NSMenu *menu = [[NSMenu alloc] init];
+    NSMenuItem *open = [menu addItemWithTitle:@"Open Relay" action:@selector(openFromStatusItem:) keyEquivalent:@""];
+    open.target = self;
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *quit = [menu addItemWithTitle:@"Quit Relay" action:@selector(quitFromStatusItem:) keyEquivalent:@""];
+    quit.target = self;
+    item.menu = menu;
+    self.statusItem = item;
+}
+
+- (void)openFromStatusItem:(id)sender {
+    [self showMainWindow];
+}
+
+- (void)quitFromStatusItem:(id)sender {
+    [NSApp terminate:nil];
+}
+
+- (void)mainWindowWillClose:(NSNotification *)notification {
+    // The window is not hidden yet while this runs, so look again on the next turn.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self applyActivationPolicy]; });
+}
+
 - (void)notchPanelRequestsOpenRelayAt:(NSDictionary *)destination {
     NSURLComponents *components = [[NSURLComponents alloc] init];
     NSMutableArray *items = [NSMutableArray array];
@@ -159,14 +316,20 @@ static BOOL RelayMacIsDark(void) {
     components.queryItems = items;
     NSData *json = [NSJSONSerialization dataWithJSONObject:@[components.percentEncodedQuery ?: @""] options:0 error:nil];
     NSString *argument = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
-    if (argument) [self.webView evaluateJavaScript:[NSString stringWithFormat:@"(function(h){if(window.location.hash.slice(1)===h){window.dispatchEvent(new Event('hashchange'));}else{window.location.hash=h;}})((%@)[0]);", argument] completionHandler:nil];
+    if (!self.webView) self.pendingHash = components.percentEncodedQuery ?: @"";
+    if (argument && self.webView) [self.webView evaluateJavaScript:[NSString stringWithFormat:@"(function(h){if(window.location.hash.slice(1)===h){window.dispatchEvent(new Event('hashchange'));}else{window.location.hash=h;}})((%@)[0]);", argument] completionHandler:nil];
     [self showMainWindow];
 }
 
+// The window is built the first time it is asked for, so a Relay that only shows the notch does not carry a web view.
 - (void)showMainWindow {
+    if (!self.serverURL) { self.wantsWindow = YES; return; } // the engine is still starting: the window opens when it is ready
+    [self buildWindowIfNeeded];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     if (self.window.miniaturized) [self.window deminiaturize:nil];
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
+    [self showStatusItem:NO];
 }
 
 #pragma mark - Move to Applications
@@ -178,6 +341,7 @@ static BOOL RelayMacIsDark(void) {
     if ([bundlePath hasPrefix:@"/Applications/"] || [bundlePath hasPrefix:userApplications]) return NO;
     if ([NSUserDefaults.standardUserDefaults boolForKey:RelaySkipMoveKey]) return NO;
 
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; // a Dock-less app cannot show this question properly
     [NSApp activateIgnoringOtherApps:YES];
     NSAlert *ask = [[NSAlert alloc] init];
     ask.messageText = @"Move Relay to your Applications folder?";
@@ -314,7 +478,7 @@ static BOOL RelayMacIsDark(void) {
             NSURL *url = [NSURL URLWithString:[line substringFromIndex:prefix.length]];
             if (url && !self.ready) {
                 self.ready = YES;
-                [self openWindowForURL:url];
+                [self engineReadyAtURL:url];
             }
         }
     }
@@ -337,8 +501,24 @@ static BOOL RelayMacIsDark(void) {
 
 #pragma mark - Window
 
-- (void)openWindowForURL:(NSURL *)url {
+// The engine is up. The notch always starts; the main window only when it was asked for (a setting, the first start ever,
+// a notch shortcut, or the notch being turned off, which would leave nothing to see).
+- (void)engineReadyAtURL:(NSURL *)url {
     self.serverURL = url;
+    // Marked here, not at launch: when Relay moves itself to Applications, the copy that opens next is still the first start.
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:RelayLaunchedBeforeKey];
+    if (!self.notch) {
+        NSURL *notchURL = [NSURL URLWithString:@"notch" relativeToURL:url].absoluteURL;
+        self.notch = [[RelayNotchPanel alloc] initWithPageURL:notchURL];
+        self.notch.delegate = self;
+    }
+    if (self.wantsWindow || !self.notch.enabled) [self showMainWindow];
+    [self applyActivationPolicy];
+}
+
+- (void)buildWindowIfNeeded {
+    if (self.window || !self.serverURL) return;
+    NSURL *url = self.serverURL;
 
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
     // The dashboard tells the window which theme it shows (Appearance menu in its header).
@@ -368,17 +548,17 @@ static BOOL RelayMacIsDark(void) {
     [window.contentView addSubview:webView];
     [window center];
     [window setFrameAutosaveName:@"RelayMainWindow"];
-    [window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
     self.window = window;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(mainWindowWillClose:) name:NSWindowWillCloseNotification object:window];
 
-    [webView loadRequest:[NSURLRequest requestWithURL:url]];
-
-    if (!self.notch) {
-        NSURL *notchURL = [NSURL URLWithString:@"notch" relativeToURL:url].absoluteURL;
-        self.notch = [[RelayNotchPanel alloc] initWithPageURL:notchURL];
-        self.notch.delegate = self;
+    NSURL *initial = url;
+    if (self.pendingHash.length) {
+        NSURLComponents *parts = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+        parts.percentEncodedFragment = self.pendingHash;
+        initial = parts.URL ?: url;
     }
+    self.pendingHash = nil;
+    [webView loadRequest:[NSURLRequest requestWithURL:initial]];
 }
 
 #pragma mark - WKScriptMessageHandler
@@ -394,6 +574,13 @@ static BOOL RelayMacIsDark(void) {
         [NSUserDefaults.standardUserDefaults setBool:night forKey:RelayNightWindowKey];
         [NSUserDefaults.standardUserDefaults setObject:(followSystem ? @"system" : (night ? @"night" : @"light")) forKey:RelayThemeChoiceKey];
         RelayApplyWindowLook(self.window, night, followSystem);
+    } else if ([body[@"type"] isEqual:@"startup"]) {
+        // The dashboard's Startup menu. With a name it changes one choice; without, it only asks for the current ones.
+        NSString *name = [body[@"name"] isKindOfClass:NSString.class] ? body[@"name"] : @"";
+        if ([@[ @"login", @"window", @"hideDock" ] containsObject:name] && [body[@"on"] isKindOfClass:NSNumber.class]) {
+            [self setStartupSetting:name enabled:[body[@"on"] boolValue]];
+        }
+        [self pushStartupSettings];
     }
 }
 
@@ -516,6 +703,7 @@ static BOOL RelayMacIsDark(void) {
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return !self.notch.enabled; }
 
 - (void)fatal:(NSString *)message {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [NSApp activateIgnoringOtherApps:YES];
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"Relay could not start";
@@ -551,7 +739,15 @@ int main(int argc, const char *argv[]) {
         NSApplication *app = NSApplication.sharedApplication;
         RelayApplicationDelegate = [[RelayAppDelegate alloc] init];
         app.delegate = RelayApplicationDelegate;
-        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        [defaults registerDefaults:@{RelayNotchEnabledKey: @YES, RelayOpenWindowAtLaunchKey: @NO, RelayHideDockKey: @NO}];
+        // Someone who has used Relay before has a saved theme; only a brand new install has neither it nor the launched-before mark.
+        BOOL firstStart = ![defaults objectForKey:RelayLaunchedBeforeKey] && ![defaults objectForKey:RelayThemeChoiceKey];
+        BOOL opensWindow = firstStart || [defaults boolForKey:RelayOpenWindowAtLaunchKey] || ![defaults boolForKey:RelayNotchEnabledKey];
+        RelayApplicationDelegate.opensWindowAtLaunch = opensWindow;
+        BOOL hidesDock = !opensWindow && [defaults boolForKey:RelayHideDockKey];
+        [app setActivationPolicy:hidesDock ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
         [app run];
     }
     return 0;

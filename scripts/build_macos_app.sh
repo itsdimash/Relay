@@ -86,6 +86,7 @@ CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache" xcrun clang \
   -framework Cocoa \
   -framework WebKit \
   -framework QuartzCore \
+  -framework ServiceManagement \
   "$PROJECT_ROOT/packaging/RelayNativeApp.m" \
   "$PROJECT_ROOT/packaging/RelayNotchPanel.m" \
   "$PROJECT_ROOT/packaging/RelayNowPlaying.m" \

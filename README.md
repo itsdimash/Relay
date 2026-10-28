@@ -91,6 +91,14 @@ Move the pointer to the notch and a small dark panel grows out of it, with icon 
 - **Notifications:** the panel announces what happens with a small animated card that slides in under the notch: a task starting, a plan waiting for approval, a question for you, the plan being approved, a decision needed, a retry countdown, an Auto-mode decision, a failure, and a finished task with a burst of confetti. The panel edge also flashes in the matching colour, and the Task tab breathes while something needs you. The Office reacts too (sparks on a retry, confetti on approval). Reduced-motion settings replace the movement with a plain fade. The native panel size constants changed (`FullWidth` 780, `FullBodyHeight` 312), so rebuild the app to see the larger room.
 - **View → Open Notch Panel from Screen Top** turns the hover trigger off and on.
 - While it is on, closing the main window leaves Relay running so the panel keeps working; click the Dock icon to bring the window back, or press Command-Q to quit.
+
+**Startup.** Relay starts as a notch app: when it launches, only the notch is active, and the main window (the agent workspace) is not even built until you ask for it. Open it from the **Office** tab or any **Open Relay** button in the panel, from the Dock icon, or from the menu bar item below. The very first start of a new install opens the window once so you can see the app. The three choices are behind the **Startup** button (a power icon) in the window header, next to Language and Appearance; the same three are in the Mac menu bar under **Relay › Startup**:
+
+- **Open Relay at Login** adds Relay to your macOS login items (System Settings › General › Login Items). macOS may ask you to approve it there the first time.
+- **Open the Window When Relay Starts** also opens the main window at every start (off by default: notch only). If you turn the notch panel off, the window always opens, because there would be nothing else to see.
+- **Hide the Dock Icon While Only the Notch Is Showing** (off by default) removes the Dock icon whenever the window is closed. A small Relay icon appears in the menu bar instead, with **Open Relay** and **Quit Relay**, so you can still get back in and quit. The Dock icon comes back while the window is open.
+
+The choices are saved in the app's preferences (`RelayOpenWindowAtLaunch`, `RelayHideDockWhenNotchOnly`). The button only exists in the Mac app; in a browser there is nothing to start.
 - The panel is a page served by the local engine at `/notch`, so you can also open `http://127.0.0.1:48765/notch` in a browser.
 
 ### Usage left

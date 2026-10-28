@@ -12,6 +12,8 @@
 :root[data-theme="night"] .theme-button .theme-moon { display: none; }
 .theme-menu { position: absolute; z-index: 70; top: calc(100% + 8px); right: 0; width: 232px; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface, #fff); box-shadow: 0 14px 40px rgba(13, 19, 33, .16); }
 .theme-menu[hidden] { display: none; }
+.theme-button[hidden] { display: none; }
+.startup-menu { width: 308px; }
 .theme-menu > p { margin: 4px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
 .theme-item { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 44px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); font-size: 14px; text-align: left; cursor: pointer; }
 .theme-item:hover { background: var(--brand-tint); }
