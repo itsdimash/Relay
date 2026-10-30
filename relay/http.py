@@ -98,6 +98,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'notes': self.app.read_notes()})
             except (ValueError, OSError) as error:
                 return self.respond({'error': str(error)}, 400)
+        if path == '/api/translate':
+            return self.respond(self.app.translate_status())
         if path == '/api/deliver':
             try:
                 return self.respond({'items': self.app.deliver_list(), 'settings': self.app.deliver_settings(), 'problem': self.app.catcher.problem})
@@ -118,7 +120,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/connections':
             return self.respond(self.app.tool_status())
         files = {'/review.js': ('review.js', 'text/javascript; charset=utf-8'), '/review.css': ('review.css', 'text/css; charset=utf-8'), '/markdown.js': ('markdown.js', 'text/javascript; charset=utf-8'), '/report.css': ('report.css', 'text/css; charset=utf-8'), '/sidebar.css': ('sidebar.css', 'text/css; charset=utf-8'), '/relay.svg': ('relay.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/x-icon'), '/favicon.png': ('favicon.png', 'image/png'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}
-        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'notch-music-fx', 'notch-battery', 'notch-reminders', 'notch-voice', 'notch-commands', 'notch-speech', 'limits', 'appearance')
+        modules = ('recovery', 'clarification', 'api', 'attachments', 'constants', 'conversation', 'dom', 'findings', 'history', 'notifications', 'projects', 'state', 'tasks', 'task-queue', 'teams', 'updates', 'storage', 'notch-room', 'notch-collaboration', 'notch-activity', 'notch-music-fx', 'notch-battery', 'notch-translate', 'notch-reminders', 'notch-voice', 'notch-commands', 'notch-speech', 'limits', 'appearance')
         files.update({f'/js/{name}.js': (f'js/{name}.js', 'text/javascript; charset=utf-8') for name in modules})
         files['/recovery.css'] = ('recovery.css', 'text/css; charset=utf-8')
         files['/clarification.css'] = ('clarification.css', 'text/css; charset=utf-8')
@@ -195,6 +197,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'notes': self.app.mark_reminded(payload.get('ids'))})
             if path == '/api/notes/remove':
                 return self.respond({'notes': self.app.remove_note(payload.get('id'))})
+            if path == '/api/translate':
+                return self.respond(self.app.translate_text(payload.get('text'), payload.get('target')))
+            if path == '/api/translate/key':
+                return self.respond(self.app.set_translate_key(payload.get('key')))
             if path == '/api/deliver/add':
                 return self.respond({'items': self.app.add_deliver(payload.get('paths'))}, 201)
             if path == '/api/deliver/remove':

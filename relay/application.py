@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import threading
 
-from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, notify, providers, recovery, registry, reports, retention
+from . import attachments, deliver, git_ops, history, lifecycle, limits, notes, notify, providers, recovery, registry, reports, retention, translate
 from . import contracts, task_queue
 from .http import Handler
 from .updater import Updater, RESTART_STATUS
@@ -103,6 +103,11 @@ class Application:
     due_reminders = notes.due_reminders
     mark_reminded = notes.mark_reminded
     snooze_note = notes.snooze
+
+    # The notch's Translate page: Gemini translates, and the engine keeps the API key.
+    translate_status = translate.status
+    translate_text = translate.translate
+    set_translate_key = translate.save_key
 
     queue_snapshot = task_queue.queue_snapshot
     add_queued_task = task_queue.add_task

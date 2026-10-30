@@ -5,9 +5,10 @@ import { createCollaboration } from './js/notch-collaboration.js';
 import { createActivity } from './js/notch-activity.js';
 import { createMusicFx, STYLES, DEFAULT_STYLE, isStyle } from './js/notch-music-fx.js';
 import { createBatteryWatcher } from './js/notch-battery.js';
-import { VOICE_KEY, LANGUAGE_KEY, speechLocale, otherLanguage, languageCode, joinSpeech, spokenCommand, voiceProblem } from './js/notch-voice.js';
+import { VOICE_KEY, LANGUAGE_KEY, WAKE_KEY, speechLocale, otherLanguage, languageCode, joinSpeech, spokenCommand, voiceProblem, wakeProblem } from './js/notch-voice.js';
 import { SPEAK_KEY, speakMode, shouldSpeak, languageOf, lineForRun, lineForReminder, remember } from './js/notch-speech.js';
 import { routeCommand, VIEW_NAMES, briefFor, pickProject, teamFor, fitMode, typedText } from './js/notch-commands.js';
+import { createTranslator } from './js/notch-translate.js';
 import { parseReminder, dueLabel, createReminderWatcher, quickChoices, startingMoment, stepMoment, canSet, dayLabel, hourText, minuteText } from './js/notch-reminders.js';
 
 const $ = id => document.getElementById(id);
@@ -224,14 +225,15 @@ let view = 'notes';
 // The tab the person picked last. The first opening after the app starts is the Notes; after that the panel comes back to this.
 let chosenView = 'notes';
 let mode = 'compact'; // pill | compact | full, set by the app
-const VIEWS = ['music', 'notes', 'deliver', 'task', 'office'];
+const VIEWS = ['music', 'notes', 'deliver', 'translate', 'task', 'office'];
 let notes = [];
 let deliver = [];
 let noteBusy = false;
 let shownNotes = null; // ids of the notes drawn last time (null before the first draw, so the first list does not animate)
 let inputFocused = false;
 let holding = false;
-const voice = { on: false, latched: false, base: '', pressedAt: 0 }; // the microphone: on while it is listening
+const voice = { on: false, latched: false, base: '', pressedAt: 0, target: 'note' }; // the microphone: on while it is listening
+const wake = { hearing: false, sent: null, announce: false }; // "Hey Relay": the person has said it and the request is being heard
 const ask = { open: false, mode: 'build', agent: '', team: null, busy: false, resizing: false }; // a spoken request for the agents, waiting for a yes
 const typing = { open: false, app: '' };   // spoken words to type into another app, waiting for a yes
 let openingApp = null;                      // the app that was asked for, in case no app has that name
@@ -546,8 +548,14 @@ async function decide(path, body) {
   }
 }
 
-// Views: Music, Notes, Deliver, Task and (in the full panel only) Office.
-const tabs = { music: $('tabMusic'), notes: $('tabNotes'), deliver: $('tabDeliver'), task: $('tabTask'), office: $('tabOffice') };
+// Views: Music, Notes, Deliver, Translate, Task and (in the full panel only) Office.
+const tabs = { music: $('tabMusic'), notes: $('tabNotes'), deliver: $('tabDeliver'), translate: $('tabTranslate'), task: $('tabTask'), office: $('tabOffice') };
+// Translate: the engine translates; the page asks the app to make the small panel taller when the result is long.
+const translator = createTranslator({
+  post, tell, native: !!native, onHold: () => syncHold(),
+  // A translation asked for by voice is said aloud when answers are spoken (Kazakh is left to the eyes: the Mac has no voice for it).
+  onSpeak: result => { if (result.to !== 'kk' && speechMode() !== 'off') speak(result.translation); },
+});
 
 // Tabs the person hid (Notch menu in the Relay window). The Task tab always stays: plans wait there for approval.
 const TAB_KEY = 'relay.notchTabs';
@@ -562,6 +570,7 @@ function fallbackView() {
 function setView(next, { focus = true } = {}) {
   if (next === 'notes' && current?.plan) next = 'task'; // a waiting plan always comes first
   if (!VIEWS.includes(next) || !shown(next) || (next === 'office' && mode !== 'full')) next = fallbackView();
+  const before = view;
   view = next;
   $('panel').dataset.view = view;
   fx.setScene({ mode, view });
@@ -578,13 +587,15 @@ function setView(next, { focus = true } = {}) {
     else $('noteInput').blur();
   }
   if (view === 'deliver') loadDeliver();
+  if (before === 'translate' && view !== 'translate') translator.leave(); // the panel goes back to its usual size
+  if (view === 'translate') translator.enter({ focus });
   tickProgress();
   syncHold();
 }
 
 // While the person is typing, the panel must not close because the pointer moved away.
 function syncHold() {
-  const want = (view === 'notes' && inputFocused) || voice.on || (ask.open && view === 'task') || (typing.open && view === 'notes');
+  const want = (view === 'notes' && inputFocused) || (view === 'translate' && translator.wantsHold()) || voice.on || (ask.open && view === 'task') || (typing.open && view === 'notes');
   if (want === holding) return;
   holding = want;
   tell({ type: 'hold', on: want });
@@ -822,21 +833,30 @@ $('noteHint').addEventListener('click', () => {
 const readStored = key => { try { return localStorage.getItem(key); } catch (_) { return null; } };
 const voiceEnabled = () => !!native && readStored(VOICE_KEY) !== 'off';
 const voiceLocale = () => speechLocale(readStored(LANGUAGE_KEY), window.relayI18n?.language);
+// The words can go to the note field or, from the Translate tab, to the text to translate (they replace it).
+const intoTranslate = () => voice.target === 'translate';
+const setVoiceText = text => { if (intoTranslate()) translator.fill(text); else $('noteInput').value = text; };
 function paintVoice() {
-  $('micButton').hidden = !voiceEnabled();
-  $('voiceLang').hidden = !voiceEnabled();
-  $('voiceLang').textContent = languageCode(voiceLocale());
-  $('micButton').setAttribute('aria-pressed', String(voice.on));
+  for (const [mic, lang] of [['micButton', 'voiceLang'], ['trMic', 'trVoiceLang']]) {
+    $(mic).hidden = !voiceEnabled();
+    $(lang).hidden = !voiceEnabled();
+    $(lang).textContent = languageCode(voiceLocale());
+  }
+  const noting = voice.on && !intoTranslate();
+  $('micButton').setAttribute('aria-pressed', String(noting));
+  $('trMic').setAttribute('aria-pressed', String(voice.on && intoTranslate()));
   const composer = document.querySelector('.composer');
-  composer.toggleAttribute('data-listening', voice.on);
-  $('noteInput').placeholder = voice.on ? 'Listening…' : 'Write a note…';
+  composer.toggleAttribute('data-listening', noting || wake.hearing);
+  $('noteInput').placeholder = noting || wake.hearing ? 'Listening…' : 'Write a note…';
+  translator.listening(voice.on && intoTranslate());
 }
-function startVoice() {
+function startVoice(target = 'note') {
   if (voice.on || !voiceEnabled()) return;
   stopSpeaking(); // the microphone must not hear the answer
   voice.on = true;
   voice.latched = false;
-  voice.base = $('noteInput').value;
+  voice.target = target;
+  voice.base = target === 'translate' ? translator.text() : $('noteInput').value;
   $('noteError').textContent = '';
   paintVoice();
   syncHold();
@@ -851,9 +871,12 @@ function cancelVoice() {
   endVoice(voice.base);
 }
 function endVoice(text) {
+  const wasTranslate = intoTranslate();
   voice.on = false;
   voice.latched = false;
-  if (typeof text === 'string') $('noteInput').value = text;
+  if (typeof text === 'string') setVoiceText(text);
+  voice.target = 'note';
+  if (wasTranslate) { paintVoice(); syncHold(); return; }
   paintVoice();
   syncHold();
   showNoteHint();
@@ -861,9 +884,16 @@ function endVoice(text) {
 window.relayDictation = (state, text, error) => {
   if (!voice.on) return;
   if (state === 'text') {
-    $('noteInput').value = joinSpeech(voice.base, text);
-    showNoteHint();
+    setVoiceText(intoTranslate() ? String(text || '').trim() : joinSpeech(voice.base, text));
+    if (!intoTranslate()) showNoteHint();
   } else if (state === 'done') {
+    if (intoTranslate()) {
+      // Click and speak: what was said is the text, and it is translated into the language picked on the page.
+      const words = String(text || '').trim();
+      endVoice(words || voice.base);
+      if (words) translator.request({ text: words, spoken: true });
+      return;
+    }
     const spoken = joinSpeech(voice.base, text);
     const command = voice.base.trim() ? null : routeCommand(spoken); // a command counts only when the field was empty
     if (command) {
@@ -878,45 +908,59 @@ window.relayDictation = (state, text, error) => {
   } else if (state === 'cancelled') {
     endVoice(voice.base);
   } else if (state === 'error') {
+    const message = voiceProblem(error);
+    const wasTranslate = intoTranslate();
     endVoice(voice.base);
-    $('noteError').textContent = voiceProblem(error);
+    if (wasTranslate) translator.problem(message);
+    else $('noteError').textContent = message;
   }
 };
 // The app saw the right Option key held down (or let go).
 window.relayVoiceKey = down => {
   if (down) {
-    if (!voiceEnabled() || !shown('notes') || current?.plan) return;
-    setView('notes', { focus: false });
-    startVoice();
+    const toTranslate = view === 'translate' && shown('translate') && translator.dictatable(); // on the Translate tab the key talks to it
+    if (!voiceEnabled() || (!toTranslate && !shown('notes')) || current?.plan) return;
+    if (!toTranslate) setView('notes', { focus: false });
+    startVoice(toTranslate ? 'translate' : 'note');
   } else if (!voice.latched) {
     stopVoice();
   }
 };
-$('micButton').addEventListener('pointerdown', event => {
-  if (event.button !== 0) return;
-  if (voice.on && voice.latched) {
-    stopVoice();
-    return;
-  }
-  voice.pressedAt = Date.now();
-  startVoice();
-});
+for (const [id, target] of [['micButton', 'note'], ['trMic', 'translate']]) {
+  $(id).addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    if (voice.on && voice.latched) {
+      stopVoice();
+      return;
+    }
+    voice.pressedAt = Date.now();
+    startVoice(target);
+  });
+}
 const releaseMic = () => {
   if (!voice.on || voice.latched || !voice.pressedAt) return;
   if (Date.now() - voice.pressedAt < 300) voice.latched = true; // a tap: keep listening until the next tap
   else stopVoice();                                           // a hold: let go to finish
   voice.pressedAt = 0;
 };
-$('micButton').addEventListener('pointerup', releaseMic);
-$('micButton').addEventListener('pointercancel', releaseMic);
-$('micButton').addEventListener('mousedown', event => event.preventDefault());
-$('voiceLang').addEventListener('click', () => {
-  try { localStorage.setItem(LANGUAGE_KEY, otherLanguage(voiceLocale())); } catch (_) { /* the choice lasts until the panel is closed */ }
-  paintVoice();
+for (const id of ['micButton', 'trMic']) {
+  $(id).addEventListener('pointerup', releaseMic);
+  $(id).addEventListener('pointercancel', releaseMic);
+  $(id).addEventListener('mousedown', event => event.preventDefault());
+}
+for (const id of ['voiceLang', 'trVoiceLang']) {
+  $(id).addEventListener('click', () => {
+    try { localStorage.setItem(LANGUAGE_KEY, otherLanguage(voiceLocale())); } catch (_) { /* the choice lasts until the panel is closed */ }
+    paintVoice();
+    syncWake(); // "Hey Relay" listens in the language picked here
+  });
+  $(id).addEventListener('mousedown', event => event.preventDefault());
+}
+window.addEventListener('storage', event => {
+  if (event.key === VOICE_KEY || event.key === LANGUAGE_KEY) paintVoice();
+  if (event.key === VOICE_KEY || event.key === LANGUAGE_KEY || event.key === WAKE_KEY) syncWake();
 });
-$('voiceLang').addEventListener('mousedown', event => event.preventDefault());
-window.addEventListener('storage', event => { if (event.key === VOICE_KEY || event.key === LANGUAGE_KEY) paintVoice(); });
-window.addEventListener('relaylangchange', paintVoice);
+window.addEventListener('relaylangchange', () => { paintVoice(); syncWake(); });
 // Escape while listening throws the words away (a second Escape hides the panel).
 document.addEventListener('keydown', event => {
   if (!voice.on || event.key !== 'Escape') return;
@@ -924,6 +968,67 @@ document.addEventListener('keydown', event => {
   cancelVoice();
 }, true);
 paintVoice();
+
+// "Hey Relay": the app listens all the time, only when the person turned it on, and only with speech recognition that runs on
+// this Mac. It says when the words were heard ("heard"), and then what came after them ("command"). The request is handled
+// like one spoken with the right Option key: a command is carried out, anything else becomes a note in the field.
+const wakeEnabled = () => voiceEnabled() && readStored(WAKE_KEY) === 'on';
+function syncWake() {
+  if (!native) return;
+  const on = wakeEnabled();
+  const state = on ? voiceLocale() : '';
+  if (state === wake.sent) return;
+  wake.announce = on && wake.sent === '';     // switched on while the panel was running (not at every launch): say when it is listening
+  wake.sent = state;
+  tell({ type: 'wake', on, locale: voiceLocale() });
+}
+function endWake() {
+  if (!wake.hearing) return;
+  wake.hearing = false;
+  paintVoice();
+}
+window.relayWake = (state, text, error) => {
+  if (!wakeEnabled()) return;
+  if (state === 'ready') {
+    if (!wake.announce) return;
+    wake.announce = false;
+    toast('done', 'Hey Relay is on', 'Say “Hey Relay”, then your request.');
+    tell({ type: 'attention', keep: false });
+  } else if (state === 'heard') {
+    if (voice.on) return; // the microphone button is already listening
+    stopSpeaking();
+    wake.hearing = true;
+    paintVoice();
+    if (shown('notes') && !current?.plan) setView('notes', { focus: false });
+    tell({ type: 'attention', keep: false }); // the panel peeks out, so you see that Relay is listening
+  } else if (state === 'command') {
+    endWake();
+    const spoken = String(text || '').trim();
+    if (!spoken || voice.on) return;
+    const command = routeCommand(spoken);
+    if (command) {
+      tell({ type: 'attention', keep: true });
+      runCommand(command);
+      return;
+    }
+    const heard = spokenCommand(joinSpeech($('noteInput').value, spoken));
+    $('noteInput').value = heard.text;
+    showNoteHint();
+    tell({ type: 'attention', keep: false });
+    if (heard.save && heard.text) addNote(heard.save);
+  } else if (state === 'error') {
+    endWake();
+    wake.announce = false;
+    const message = wakeProblem(error);
+    $('noteError').textContent = message;
+    toast('failed', 'Hey Relay is off', message); // whatever tab is showing, and even if the panel was hidden
+    tell({ type: 'attention', keep: false });
+  }
+};
+syncWake();
+// The Relay window and this panel are separate pages: when the choice is changed there, a hidden panel may never be told,
+// so the choice is looked at again every few seconds, and whenever the panel appears.
+setInterval(syncWake, 2000);
 
 // Answers said out loud. The Mac app speaks. A task that was asked for by voice says what became of it (its result, a plan that
 // waits for approval, a question, a failure); "everything" in the window's Notch menu adds tasks started by hand and
@@ -990,10 +1095,17 @@ function runCommand(command) {
       else if ((wanted === 'pause') === playing) tell({ type: 'media', command: 'toggle' }); // already as asked: nothing to press
       say({ pause: 'Paused.', play: 'Playing.', next: 'Next song.', previous: 'Previous song.' }[wanted]);
     }
-  } else if (command.kind === 'todo') {
+  } else if (command.kind === 'translate') {
+    if (!shown('translate')) say('That tab is turned off in the Relay window.');
+    else {
+      pickTab('translate');
+      translator.request({ text: command.text, target: command.target, spoken: true });
+    }
+  } else if (command.kind === 'todo' || command.kind === 'note') {
+    if (shown('notes')) setView('notes', { focus: false }); // the new note appears in front of the person
     $('noteInput').value = command.text;
     showNoteHint();
-    addNote('todo');
+    addNote(command.kind);
   } else if (command.kind === 'agents') {
     openAsk(command);
     pickTab('task'); // everything about the agents lives on the Task page, not in the notes
@@ -1698,6 +1810,9 @@ for (const [id, command] of [['musicPrev', 'previous'], ['musicToggle', 'toggle'
   $(id).addEventListener('click', () => tell({ type: 'media', command }));
 }
 
+// The Paste button on the Translate page asked the app for the clipboard; this is its answer.
+window.relayClipboard = text => translator.pasted(text);
+
 // The app sets the shape of the panel (pill, compact or full) and tells us how tall the notch is.
 window.relayPanelMode = info => {
   if (!info || typeof info !== 'object') return;
@@ -1714,6 +1829,7 @@ window.relayPanelMode = info => {
   else closeAsk(false);                  // a panel that appears again starts without it
   closeType();
   paintVoice(); // the window may have turned the microphone on or off
+  syncWake();
   applyTabs(); // the window may have changed the tabs while the panel was away
   fx.setScene({ mode, view });
   updateGlow();
@@ -1727,6 +1843,7 @@ window.relayPanelMode = info => {
   let target = typeof info.view === 'string' ? info.view : chosenView;
   if (current?.plan && (target === 'notes' || target === 'music')) target = 'task';
   setView(target, { focus: false });
+  translator.refit(); // the app forgets what height was asked for when the shape changes
   syncHold(); // a card that is still open keeps the panel open
   // A plan that needs an answer does not fit in the small panel.
   if (mode === 'compact' && current?.plan) tell({ type: 'expand' });
@@ -1741,11 +1858,13 @@ for (const id of ['open', 'open2']) $(id).addEventListener('click', () => tell({
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
   $('noteInput').blur(); // lets go of the hold before the panel hides
+  translator.blur();
   tell({ type: 'hide' });
 });
 
 room.start();
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden) translator.reset(); // closing the panel clears the Translate page: the next opening starts clean
   fx.refresh(); // stops drawing while the panel is hidden, and picks up again when it shows
   if (!document.hidden && view === 'office') room.start();
   else room.stop();

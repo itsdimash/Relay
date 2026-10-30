@@ -24,6 +24,9 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 12v2.8a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V12"/><path d="M10 3.5v8M6.8 8.4 10 11.6l3.2-3.2"/></svg>
         <span id="deliverCount" class="count" hidden></span>
       </button>
+      <button type="button" class="tab" role="tab" id="tabTranslate" aria-selected="false" aria-label="Translate" title="Translate">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h8M7 3.8v1.7M9.6 5.5c-.7 2.7-2.6 5-5.6 6.6M4.9 6.6c.8 2 2.6 3.9 5.2 5"/><path d="M11 16.5l3-7 3 7M12.2 14.2h3.6"/></svg>
+      </button>
     </div>
     <div class="side right" role="none">
       <button type="button" class="tab" role="tab" id="tabTask" aria-selected="true" aria-label="Task" title="Task">
@@ -209,6 +212,51 @@
       <p id="deliverEmpty" class="deliver-empty">Drag files here, then drag them out wherever you need them.</p>
       <ul id="deliverList" class="deliver-list"></ul>
       <p id="deliverError" class="error" role="alert"></p>
+    </section>
+
+    <section id="translate" class="translate" aria-label="Translate">
+      <div class="tr-scroll">
+        <div class="tr-body" id="trBody">
+          <form class="tr-setup" id="trSetup" hidden>
+            <strong>Translate with Gemini</strong>
+            <p>Paste your Gemini API key once. It stays on this Mac.</p>
+            <div class="tr-key-row">
+              <input id="trKey" class="tr-key" type="password" maxlength="200" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Gemini API key" aria-label="Gemini API key">
+              <button type="submit" class="btn primary" id="trKeySave">Save</button>
+              <button type="button" class="chip quiet" id="trKeyCancel" hidden>Cancel</button>
+            </div>
+            <p id="trKeyError" class="error" role="alert"></p>
+          </form>
+          <div class="tr-main" id="trMain">
+            <div class="tr-field">
+              <textarea id="trInput" class="tr-input" rows="2" maxlength="5000" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type or paste text…" aria-label="Text to translate"></textarea>
+            </div>
+            <div class="tr-row">
+              <div class="tr-targets" id="trTargets" role="radiogroup" aria-label="Translate to">
+                <button type="button" role="radio" data-target="en" aria-checked="false" title="English">EN</button>
+                <button type="button" role="radio" data-target="ru" aria-checked="false" title="Russian">RU</button>
+                <button type="button" role="radio" data-target="kk" aria-checked="false" title="Kazakh">KK</button>
+              </div>
+              <button type="button" class="chip quiet" id="trPaste" title="Paste what you copied and translate it">Paste</button>
+              <button type="button" class="composer-mic" id="trMic" aria-label="Speak the text to translate" aria-pressed="false" title="Hold to talk, or tap to start and stop" hidden>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>
+              </button>
+              <button type="button" class="composer-lang" id="trVoiceLang" aria-label="Speech language" title="Speech language" hidden>EN</button>
+              <span class="tr-keys" title="Enter translates, Shift Enter starts a new line"><kbd>↵</kbd></span>
+              <button type="button" class="btn primary tr-go" id="trGo">Translate</button>
+            </div>
+            <div class="tr-result" id="trResult" hidden>
+              <div class="tr-result-head">
+                <span id="trLangs" class="tr-langs" translate="no"></span>
+                <button type="button" class="chip" id="trCopy">Copy</button>
+                <button type="button" class="chip quiet" id="trClear">Clear</button>
+              </div>
+              <p id="trText" class="tr-text" translate="no" role="status"></p>
+            </div>
+            <div class="tr-foot"><p id="trError" class="error" role="alert"></p><button type="button" class="chip quiet" id="trChangeKey" title="Use another Gemini API key">Change key</button></div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section id="music" class="player music" aria-label="Now playing">

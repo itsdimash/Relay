@@ -1,5 +1,5 @@
 /* Notch panel: a dark panel that hangs from the notch in three sizes.
-   pill: a track just changed (440 wide shrinks to ~380 x 78); compact: the pointer is on the notch (440 x ~202);
+   pill: a track just changed (440 wide shrinks to ~380 x 78); compact: the pointer is on the notch (470 x ~202, taller when the Translate page asks);
    full: double-tap right Command, or something needs you (780 x ~344). The app sets --notch-h / --notch-w. */
 :root {
   --bg: #000;
@@ -52,7 +52,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .side { display: flex; gap: 2px; min-width: 0; }
 .side.left { grid-column: 1; justify-self: end; }
 .side.right { grid-column: 3; justify-self: start; }
-.tab { position: relative; width: 32px; height: 26px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; transition: background-color .15s, color .15s; }
+.tab { position: relative; width: 28px; height: 26px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; transition: background-color .15s, color .15s; }
 .tab svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .tab:hover { color: var(--text); }
 .tab[aria-selected="true"] { background: rgba(255, 255, 255, .14); color: var(--text); }
@@ -78,6 +78,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .panel[data-view="office"] .room { display: flex; }
 .panel[data-view="notes"] .notes { display: flex; }
 .panel[data-view="deliver"] .deliver { display: flex; }
+.panel[data-view="translate"] .translate { display: flex; }
 .panel[data-view="music"] .player { display: flex; }
 .panel[data-view="office"] .stage { grid-template-columns: min(420px, 57%) minmax(0, 1fr); gap: 18px; }
 .panel[data-mode="full"][data-view="task"] .info { width: 100%; max-width: 540px; justify-self: center; }
@@ -395,6 +396,49 @@ kbd { min-width: 18px; padding: 0 5px; border-radius: 5px; border: 1px solid rgb
 .note-empty-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .note-empty strong { color: var(--text); font-size: 12.5px; font-weight: 600; }
 .note-empty small { max-width: 320px; font-size: 11px; line-height: 1.4; }
+
+/* Translate: type or paste, pick a language, read the result. The page is as tall as its content (.tr-body); the app grows the
+   small panel to fit it, and .tr-scroll scrolls once the panel has reached its limit. */
+.translate { flex-direction: column; }
+.tr-scroll { flex: 1 1 auto; min-height: 0; margin: 0 -6px; padding: 0 6px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .2) transparent; }
+.tr-body, .tr-main { display: flex; flex-direction: column; gap: 8px; }
+.tr-field { border-radius: 12px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .04)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+  transition: border-color .2s, box-shadow .3s, background-color .2s; }
+.tr-field:focus-within { border-color: color-mix(in srgb, var(--brand) 60%, transparent); background: linear-gradient(180deg, rgba(255, 255, 255, .095), rgba(255, 255, 255, .05));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 0 0 3px color-mix(in srgb, var(--brand) 15%, transparent); }
+.tr-input { display: block; width: 100%; height: 46px; padding: 8px 12px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; line-height: 1.4; resize: none; outline: none;
+  user-select: text; -webkit-user-select: text; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .2) transparent; }
+.tr-input::placeholder { color: var(--muted); }
+.tr-row { display: flex; align-items: center; gap: 8px; }
+.tr-targets { display: flex; gap: 2px; padding: 2px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 255, 255, .05); }
+.tr-targets button { min-width: 30px; padding: 3px 8px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: .03em; transition: background-color .15s, color .15s; }
+.tr-targets button:hover { color: var(--text); }
+.tr-targets button[aria-checked="true"] { background: color-mix(in srgb, var(--brand) 30%, transparent); color: var(--text); }
+.tr-targets button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.tr-keys { margin-left: auto; opacity: .5; transition: opacity .25s; }
+.tr-field:focus-within + .tr-row .tr-keys, .tr-row:hover .tr-keys { opacity: 1; }
+.tr-go { padding: 5px 13px; }
+.tr-row .composer-mic, .tr-row .composer-lang { margin: 0; }
+.tr-field[data-listening] { border-color: color-mix(in srgb, var(--red) 62%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 0 0 3px color-mix(in srgb, var(--red) 16%, transparent); }
+.tr-field[data-listening] .tr-input::placeholder { color: var(--red); opacity: .9; }
+.translate[data-busy] .tr-go { opacity: .7; }
+.tr-result { padding: 9px 12px 11px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--line)); background: color-mix(in srgb, var(--brand) 7%, rgba(255, 255, 255, .03));
+  animation: note-in .35s cubic-bezier(.16, 1, .3, 1) both; }
+.tr-result-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.tr-langs { margin-right: auto; color: var(--brand); font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
+.tr-text { margin: 0; font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.tr-foot { display: flex; align-items: center; gap: 8px; }
+.tr-foot .error { flex: 1; min-width: 0; margin: 0; }
+.tr-foot .chip { margin-left: auto; flex: none; }
+.tr-setup { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 0; }
+.tr-setup strong { font-size: 13px; }
+.tr-setup p { margin: 0; color: var(--muted); font-size: 11.5px; }
+.tr-key-row { display: flex; gap: 8px; margin-top: 2px; }
+.tr-key { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .06); color: var(--text); font: inherit; font-size: 13px; outline: none;
+  user-select: text; -webkit-user-select: text; transition: border-color .2s, box-shadow .3s; }
+.tr-key:focus { border-color: color-mix(in srgb, var(--brand) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 15%, transparent); }
+.tr-key::placeholder { color: var(--muted); }
 
 /* Deliver: files waiting to be dragged somewhere else */
 .deliver { flex-direction: column; }

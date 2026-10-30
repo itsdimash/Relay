@@ -118,6 +118,7 @@ function createStartup() {
 const NOTCH_TABS_KEY = 'relay.notchTabs';
 const BATTERY_ALERTS_KEY = 'relay.batteryAlerts';
 const VOICE_KEY = 'relay.voice';
+const WAKE_KEY = 'relay.wake'; // 'on' only: "Hey Relay" listens all the time, and it starts off
 const SPEAK_KEY = 'relay.speak'; // 'off', 'voice' (the default) or 'all'
 
 function createNotchMenu() {
@@ -142,6 +143,7 @@ function createNotchMenu() {
       if (item.dataset.tab) item.setAttribute('aria-checked', String(!hidden.has(item.dataset.tab)));
       else if (item.dataset.alert === 'battery') item.setAttribute('aria-checked', String(read(BATTERY_ALERTS_KEY) !== 'off'));
       else if (item.dataset.voice) item.setAttribute('aria-checked', String(read(VOICE_KEY) !== 'off'));
+      else if (item.dataset.wake) item.setAttribute('aria-checked', String(read(WAKE_KEY) === 'on'));
       else if (item.dataset.speak) item.setAttribute('aria-checked', String(item.dataset.speak === 'all' ? read(SPEAK_KEY) === 'all' : read(SPEAK_KEY) !== 'off'));
     }
   }
@@ -157,6 +159,8 @@ function createNotchMenu() {
       write(BATTERY_ALERTS_KEY, read(BATTERY_ALERTS_KEY) === 'off' ? 'on' : 'off');
     } else if (item.dataset.voice) {
       write(VOICE_KEY, read(VOICE_KEY) === 'off' ? 'on' : 'off');
+    } else if (item.dataset.wake) {
+      write(WAKE_KEY, read(WAKE_KEY) === 'on' ? 'off' : 'on');
     } else if (item.dataset.speak === 'on') {
       write(SPEAK_KEY, read(SPEAK_KEY) === 'off' ? 'voice' : 'off'); // off or back to the default
     } else if (item.dataset.speak === 'all') {

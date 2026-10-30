@@ -25,9 +25,9 @@
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Relay listens while you hold the talk button or the right Option key, and turns what you say into a note or a reminder.</string>
+    <string>Relay listens while you hold the talk button or the right Option key, and turns what you say into a note or a reminder. If you turn on Hey Relay, it also listens for those words all the time.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Relay turns what you say into text for your notes. Where your Mac supports it, this happens on the Mac itself.</string>
+    <string>Relay turns what you say into text for your notes. Where your Mac supports it, this happens on the Mac itself. Hey Relay works only when it does.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>

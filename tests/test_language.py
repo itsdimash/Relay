@@ -13,7 +13,7 @@ ROOT = Path(__file__).parents[1]
 STATIC = ROOT / 'static'
 ATTRIBUTES = ('title', 'aria-label', 'placeholder', 'alt')
 # Names and codes that are the same in every language.
-SAME = {'relay', 'Relay', 'Claude', 'Codex', 'Cl', 'Cx', 'EN', 'RU', 'Claude Code'}
+SAME = {'relay', 'Relay', 'Claude', 'Codex', 'Cl', 'Cx', 'EN', 'RU', 'KK', 'Claude Code'}
 
 
 class Strings(HTMLParser):

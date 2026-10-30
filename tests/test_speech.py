@@ -88,7 +88,7 @@ class NativeTests(unittest.TestCase):
 
     def test_the_panel_passes_it_on_and_talking_silences_it(self):
         self.assertIn('isEqualToString:@"speak"', PANEL)
-        self.assertEqual(PANEL.count('@[ @"en-US", @"ru-RU" ]'), 2)                 # dictation and speech: only languages the page offers
+        self.assertEqual(PANEL.count('@[ @"en-US", @"ru-RU" ]'), 3)                 # dictation, speech and Hey Relay: only languages the page offers
         self.assertIn('window.relaySpeech(state)', PANEL)
         start = PANEL.split('if ([action isEqualToString:@"start"]) {', 1)[1].split('[self.dictation startWithLocale:locale]', 1)[0]
         self.assertIn('[self.speech stop]', start)                                  # the microphone must not hear the answer

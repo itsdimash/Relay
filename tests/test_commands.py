@@ -35,6 +35,23 @@ class RouterTests(unittest.TestCase):
         # Opening words followed by more words are somebody's note, not an instruction.
         self.assertEqual(route('open notes about the meeting', 'call mom tomorrow at 9', 'buy milk', 'tell me a joke', 'play football at 6'), [None] * 5)
 
+    def test_a_note_asked_for_by_voice_is_saved_without_its_lead_words(self):
+        got = route('take notes that i need to go to red canteen after 15 min', 'Take a note: buy milk', 'make a note to call mom at 9',
+                    'note that the meeting moved', 'write down that the key is in the car', 'add buy milk to my notes', 'remind me to call mom in 10 minutes',
+                    'Relay, remind me about the dentist tomorrow at 9', 'сделай заметку что нужно купить хлеб', 'запиши позвонить маме через 15 минут',
+                    'заметка купить молоко', 'напомни мне позвонить маме через час')
+        self.assertEqual([item['kind'] for item in got], ['note'] * 12)
+        self.assertEqual([item['text'] for item in got], ['i need to go to red canteen after 15 min', 'buy milk', 'call mom at 9', 'the meeting moved',
+                                                           'the key is in the car', 'buy milk', 'call mom in 10 minutes', 'the dentist tomorrow at 9',
+                                                           'нужно купить хлеб', 'позвонить маме через 15 минут', 'купить молоко', 'позвонить маме через час'])
+
+    def test_a_lead_without_words_or_a_phrase_that_only_mentions_notes_saves_nothing(self):
+        self.assertEqual(route('take a note', 'remind me', 'my notes are long', 'I will take notes in class tomorrow', 'make a notebook'), [None] * 5)
+
+    def test_the_page_saves_a_spoken_note_like_a_to_do(self):
+        branch = NOTCH.split("command.kind === 'todo' || command.kind === 'note'", 1)[1].split('} else if', 1)[0]
+        self.assertIn('addNote(command.kind)', branch)
+
     def test_music_commands(self):
         got = route('pause', 'Pause the music', 'stop the music please', 'play', 'resume', 'next song', 'skip', 'previous track', 'пауза', 'включи музыку', 'следующий трек', 'предыдущая песня')
         self.assertEqual([item['command'] for item in got], ['pause', 'pause', 'pause', 'play', 'play', 'next', 'next', 'previous', 'pause', 'play', 'next', 'previous'])

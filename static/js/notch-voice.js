@@ -4,6 +4,7 @@
 
 export const VOICE_KEY = 'relay.voice';      // 'off' removes the microphone button and the right Option key
 export const LANGUAGE_KEY = 'relay.voiceLang'; // 'ru' or 'en': the language of the speech, when it is not the language of the app
+export const WAKE_KEY = 'relay.wake';        // 'on' makes Relay listen for "Hey Relay" all the time; it is off until it is turned on
 
 const LOCALES = { ru: 'ru-RU', en: 'en-US' };
 
@@ -50,4 +51,11 @@ export function voiceProblem(code) {
     case 'unavailable': return 'Speech recognition is not available for this language right now.';
     default: return 'Could not hear you. Try again.';
   }
+}
+
+// What the person sees when "Hey Relay" cannot listen. It needs speech recognition that runs on this Mac, because the
+// microphone stays on and nothing may leave the computer; the other problems are the ones of the microphone button.
+export function wakeProblem(code) {
+  if (code === 'ondevice') return 'Hey Relay needs speech recognition that runs on this Mac, and it is not available for this language.';
+  return voiceProblem(code);
 }

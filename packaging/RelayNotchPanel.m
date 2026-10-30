@@ -3,6 +3,7 @@
 #import "RelayNotchGlow.h"
 #import "RelayDictation.h"
 #import "RelaySpeech.h"
+#import "RelayWake.h"
 #import "RelayActions.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
@@ -19,13 +20,15 @@ typedef NS_ENUM(NSInteger, RelayPanelMode) {
 
 static const CGFloat PillWidth = 380;
 static const CGFloat PillBodyHeight = 46;
-static const CGFloat CompactWidth = 440;
+static const CGFloat CompactWidth = 470;     // wide enough for four tabs on each side of the notch
 static const CGFloat CompactBodyHeight = 170;
 static const CGFloat FullWidth = 780;
 static const CGFloat FullBodyHeight = 312;
 static const CGFloat CardWidth = 680;       // the full panel when it only holds the card for a spoken request: wide enough for
 static const CGFloat CardBodyHeight = 186;  // its row of choices (and Russian), and no taller than the card
 static const CGFloat PanelRadius = 26;
+static const CGFloat FitMaxScreenShare = 0.55; // the small panel never grows taller than this share of the screen; the page scrolls beyond it
+static const NSUInteger ClipboardMaxLength = 5000; // the most a translation takes
 static const NSTimeInterval PillVisibleSeconds = 4.2; // how long a track-change pill stays out
 static const NSTimeInterval PillMinGap = 2.0;         // quick skipping does not flash the pill again and again
 static const CGFloat TriggerMargin = 55;      // hot zone is the notch plus this much on each side
@@ -220,7 +223,7 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 }
 @end
 
-@interface RelayNotchPanel () <WKScriptMessageHandler, WKNavigationDelegate, NSDraggingSource, RelayDictationDelegate, RelaySpeechDelegate>
+@interface RelayNotchPanel () <WKScriptMessageHandler, WKNavigationDelegate, NSDraggingSource, RelayDictationDelegate, RelaySpeechDelegate, RelayWakeDelegate>
 @property(nonatomic, strong) NSURL *pageURL;
 @property(nonatomic, strong) RelayNotchWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
@@ -240,8 +243,12 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 @property(nonatomic, strong) RelayNowPlaying *nowPlaying; // what is playing, shown as a strip in the panel
 @property(nonatomic, strong) RelayDictation *dictation; // speech to text for the note field
 @property(nonatomic, strong) RelaySpeech *speech;       // text to speech: answers said out loud
+@property(nonatomic, strong) RelayWake *wake;           // "Hey Relay": listens all the time, only when the person turned it on
+@property(nonatomic) BOOL wakeDictating;                // the microphone is in use for dictation: the wake word listener waits
+@property(nonatomic) BOOL wakeSpeaking;                 // an answer is being said out loud: it must not be heard as "Hey Relay"
 @property(nonatomic) BOOL cardSize;       // the full panel is the small one that only holds a spoken request's card
 @property(nonatomic) BOOL laidOutCard;    // ... and whether the page was last laid out that way
+@property(nonatomic) CGFloat fitHeight;   // the Translate page asked the small panel for this much body height (0: the usual size)
 @property(nonatomic, strong) NSRunningApplication *typeTarget; // the app a spoken "type …" goes to, as shown to the person
 @property(nonatomic) BOOL optionDown;       // the right Option key is down
 @property(nonatomic) BOOL optionValid;      // and nothing else was pressed with it
@@ -609,7 +616,12 @@ static NSColor *DominantColor(NSString *dataURL) {
     CGFloat band = [self notchSizeForScreen:screen].height;
     switch (mode) {
         case RelayPanelModePill: return NSMakeSize(PillWidth, band + PillBodyHeight);
-        case RelayPanelModeCompact: return NSMakeSize(CompactWidth, band + CompactBodyHeight);
+        case RelayPanelModeCompact: {
+            // Usually the same height. The Translate page grows it to hold a long result, up to a share of the screen.
+            CGFloat limit = MAX(CompactBodyHeight, NSHeight(screen.visibleFrame) * FitMaxScreenShare - band);
+            CGFloat body = self.fitHeight > CompactBodyHeight ? MIN(self.fitHeight, limit) : CompactBodyHeight;
+            return NSMakeSize(CompactWidth, band + body);
+        }
         case RelayPanelModeFull: return self.cardSize ? NSMakeSize(CardWidth, band + CardBodyHeight) : NSMakeSize(FullWidth, band + FullBodyHeight);
     }
     return NSMakeSize(CompactWidth, band + CompactBodyHeight);
@@ -637,9 +649,34 @@ static NSColor *DominantColor(NSString *dataURL) {
     }];
 }
 
+// The Translate page has a result that is taller than the small panel (or no longer has one): the panel grows downward to hold it,
+// or goes back to its usual size when the height is 0. Only the small panel changes; the page scrolls beyond the limit.
+- (void)fitBodyHeight:(CGFloat)height {
+    if (!isfinite(height) || height < 0) height = 0;
+    height = MIN(height, 4000);
+    if (height == self.fitHeight) return;
+    self.fitHeight = height;
+    if (!self.shown || self.mode != RelayPanelModeCompact) return;
+    NSScreen *screen = [self activeScreen];
+    if (!screen) return;
+    NSSize target = [self sizeForMode:self.mode screen:screen];
+    if (NSEqualSizes(target, self.contentSize)) return;
+    self.contentSize = target;
+    BOOL settled = self.progress >= 1 && !self.frameTimer;
+    if (settled) {
+        [self animateSizeTo:target duration:0.22];
+        return;
+    }
+    [self.sizeTimer invalidate];
+    self.sizeTimer = nil;
+    self.shownSize = target;
+    if (!self.frameTimer) [self applyProgress:self.progress];
+}
+
 // Changes the shape. A panel that is already open grows or shrinks smoothly; one that is opening just aims at the new size.
 - (void)changeMode:(RelayPanelMode)mode view:(NSString *)view {
     BOOL changed = mode != self.mode || self.cardSize != self.laidOutCard;
+    if (mode != self.mode) self.fitHeight = 0; // the Translate page asks again when it is back in the small panel
     self.laidOutCard = self.cardSize;
     self.mode = mode;
     self.modeView = view;
@@ -759,6 +796,7 @@ static NSColor *DominantColor(NSString *dataURL) {
     if (!self.shown) return;
     self.shown = NO;
     self.cardSize = NO; // the next full panel is a full one unless a card asks otherwise
+    self.fitHeight = 0; // and a small one starts at its usual height
     __weak RelayNotchPanel *weakSelf = self;
     [self animateToProgress:0 duration:animated ? 0.32 : 0 completion:^{
         // A new show request may have started while this was running.
@@ -1225,6 +1263,31 @@ static NSColor *DominantColor(NSString *dataURL) {
                 [self.window makeFirstResponder:self.webView];
             }
         }
+    } else if ([type isEqualToString:@"fit"]) {
+        // The Translate page: the height it needs below the notch band, or 0 to go back to the usual size.
+        id wanted = body[@"height"];
+        [self fitBodyHeight:[wanted isKindOfClass:NSNumber.class] ? [wanted doubleValue] : 0];
+    } else if ([type isEqualToString:@"clipboard"]) {
+        // The Paste button on the Translate page. The clipboard is read only when the person presses it, never in the background.
+        NSString *text = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
+        if (![text isKindOfClass:NSString.class]) text = @"";
+        text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (text.length > ClipboardMaxLength) {
+            NSRange range = [text rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, ClipboardMaxLength)];
+            text = [text substringWithRange:range];
+        }
+        [self.webView callAsyncJavaScript:@"if (window.relayClipboard) window.relayClipboard(text); return 'ok';"
+                                arguments:@{ @"text": text }
+                                  inFrame:nil
+                           inContentWorld:WKContentWorld.pageWorld
+                        completionHandler:nil];
+    } else if ([type isEqualToString:@"copy"]) {
+        // The Copy button on the Translate page puts the translation on the clipboard.
+        NSString *text = [body[@"text"] isKindOfClass:NSString.class] ? body[@"text"] : @"";
+        if (text.length > 0 && text.length <= 20000) {
+            [NSPasteboard.generalPasteboard clearContents];
+            [NSPasteboard.generalPasteboard setString:text forType:NSPasteboardTypeString];
+        }
     } else if ([type isEqualToString:@"shrink"]) {
         // The person left the Office (or the plan) for a view that fits the small panel.
         if (self.shown && self.mode == RelayPanelModeFull) {
@@ -1262,12 +1325,28 @@ static NSColor *DominantColor(NSString *dataURL) {
                 self.dictation = [[RelayDictation alloc] init];
                 self.dictation.delegate = self;
             }
+            self.wakeDictating = YES;
+            [self updateWakePause];
             [self.speech stop]; // the person is talking now: the answer stops (and the microphone does not hear it)
             [self.dictation startWithLocale:locale];
         } else if ([action isEqualToString:@"stop"]) {
             [self.dictation stop];
         } else if ([action isEqualToString:@"cancel"]) {
             [self.dictation cancel];
+        }
+    } else if ([type isEqualToString:@"wake"]) {
+        // "Hey Relay" turned on or off in the Relay window (the page tells us when it loads and whenever the choice changes).
+        NSString *locale = [body[@"locale"] isKindOfClass:NSString.class] ? body[@"locale"] : @"en-US";
+        if (![@[ @"en-US", @"ru-RU" ] containsObject:locale]) locale = @"en-US";
+        if ([body[@"on"] boolValue]) {
+            if (!self.wake) {
+                self.wake = [[RelayWake alloc] init];
+                self.wake.delegate = self;
+            }
+            [self.wake startWithLocale:locale];
+            [self updateWakePause];
+        } else {
+            [self.wake stop];
         }
     } else if ([type isEqualToString:@"speak"]) {
         // An answer to say out loud (or "stop"). The voice carries on if the panel hides: the answer is for the person, not the panel.
@@ -1280,6 +1359,8 @@ static NSColor *DominantColor(NSString *dataURL) {
                 self.speech = [[RelaySpeech alloc] init];
                 self.speech.delegate = self;
             }
+            self.wakeSpeaking = YES; // the wake word listener does not listen while the Mac talks
+            [self updateWakePause];
             [self.speech speak:body[@"text"] locale:locale];
         }
     } else if ([type isEqualToString:@"app"]) {
@@ -1330,13 +1411,33 @@ static NSColor *DominantColor(NSString *dataURL) {
 #pragma mark - RelayDictationDelegate
 
 - (void)dictation:(RelayDictation *)dictation reports:(NSString *)state text:(NSString *)text error:(NSString *)error {
+    if ([@[ @"done", @"cancelled", @"error" ] containsObject:state]) {
+        self.wakeDictating = NO; // the microphone is free again
+        [self updateWakePause];
+    }
     [self callPage:@"if (window.relayDictation) window.relayDictation(state, text, error);"
+         arguments:@{ @"state": state, @"text": text ?: @"", @"error": error ?: @"" }];
+}
+
+#pragma mark - RelayWakeDelegate
+
+// The wake word listener waits while the microphone or the speakers are busy with something else.
+- (void)updateWakePause {
+    if (self.wakeDictating || self.wakeSpeaking) [self.wake pause];
+    else [self.wake resume];
+}
+
+- (void)wake:(RelayWake *)wake reports:(NSString *)state text:(NSString *)text error:(NSString *)error {
+    [self callPage:@"if (window.relayWake) window.relayWake(state, text, error);"
          arguments:@{ @"state": state, @"text": text ?: @"", @"error": error ?: @"" }];
 }
 
 #pragma mark - RelaySpeechDelegate
 
 - (void)speech:(RelaySpeech *)speech reports:(NSString *)state {
+    if ([state isEqualToString:@"start"]) self.wakeSpeaking = YES;
+    else if ([state isEqualToString:@"end"] || [state isEqualToString:@"unavailable"]) self.wakeSpeaking = NO;
+    [self updateWakePause];
     [self callPage:@"if (window.relaySpeech) window.relaySpeech(state);" arguments:@{ @"state": state }];
 }
 

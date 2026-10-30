@@ -94,6 +94,7 @@ CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache" xcrun clang \
   "$PROJECT_ROOT/packaging/RelayNowPlaying.m" \
   "$PROJECT_ROOT/packaging/RelayNotchGlow.m" \
   "$PROJECT_ROOT/packaging/RelayDictation.m" \
+  "$PROJECT_ROOT/packaging/RelayWake.m" \
   "$PROJECT_ROOT/packaging/RelaySpeech.m" \
   "$PROJECT_ROOT/packaging/RelayActions.m" \
   -o "$CONTENTS/MacOS/Relay"

@@ -23,6 +23,31 @@ const MEDIA = [
   ['previous', /^(?:please\s+)?(?:play\s+)?(?:previous|last|go\s+back)(?:\s+(?:track|song))?$|^(?:предыдущ\p{L}*(?:\s+(?:трек|песн\p{L}*))?|назад)$/iu],
 ];
 
+// "translate this to Russian", "translate good morning into English", "how do you say thanks in Kazakh", "переведи на казахский: привет":
+// the Translate page opens, with that language chosen. Without words ("this", "это") it translates what was copied.
+const LANG_EN = '(english|russian|kazakh|kazak)';
+const LANG_RU = '(английск\\p{L}*|русск\\p{L}*|казахск\\p{L}*)';
+const THIS_EN = '(?:(?:this|that|it|the\\s+clipboard)(?:\\s+(?:text|message|sentence|phrase))?\\s+)?';
+const THIS_RU = '(?:(?:это|эту\\s+фразу|этот\\s+текст|текст)\\s+)?';
+const TRANSLATE = [
+  { pattern: new RegExp(`^translate\\s+${THIS_EN}(?:in)?to\\s+${LANG_EN}(?:\\s+language)?\\s*[:,\\-–]?\\s*(.*)$`, 'iu'), language: 1, words: 2 },
+  { pattern: new RegExp(`^translate\\s+(.+?)\\s+(?:in)?to\\s+${LANG_EN}(?:\\s+language)?$`, 'iu'), language: 2, words: 1 },
+  { pattern: new RegExp(`^how\\s+(?:do\\s+(?:you|i)\\s+)?say\\s+(.+?)\\s+in\\s+${LANG_EN}$`, 'iu'), language: 2, words: 1 },
+  { pattern: new RegExp(`^переведи\\s+${THIS_RU}на\\s+${LANG_RU}(?:\\s+язык)?\\s*[:,\\-–]?\\s*(.*)$`, 'iu'), language: 1, words: 2 },
+  { pattern: new RegExp(`^переведи\\s+(.+?)\\s+на\\s+${LANG_RU}(?:\\s+язык)?$`, 'iu'), language: 2, words: 1 },
+  { pattern: new RegExp(`^как\\s+(?:будет|сказать)\\s+(.+?)\\s+на\\s+${LANG_RU}$`, 'iu'), language: 2, words: 1 },
+];
+export const MAX_TRANSLATE = 5000;
+// The language that was said, as the code the Translate page uses.
+export function translateTarget(word) {
+  const name = String(word || '').toLowerCase();
+  if (/^(?:english|англ)/u.test(name)) return 'en';
+  if (/^(?:russian|русск)/u.test(name)) return 'ru';
+  if (/^(?:kazak|казах)/u.test(name)) return 'kk';
+  return null;
+}
+const COPIED = /^(?:this|that|it|это|этот|эту)$/iu;
+
 const TODO = [
   /^(?:please\s+)?(?:add\s+(?:a\s+|an\s+)?(?:new\s+)?)?(?:to-?do|todo)\s*[:,\-–]?\s+(.+)$/iu,
   /^(?:please\s+)?add\s+(.+?)\s+to\s+(?:my\s+)?(?:to-?do|todo)(?:\s+list)?$/iu,
@@ -123,10 +148,26 @@ export function guessMode(text, asked = false, agent = null) {
   return fitMode(agent, 'build');
 }
 
+// "Take a note that I need to go to the canteen after 15 min", "remind me to call mom at 9": the words after the lead are
+// saved as a note at once (a time in them becomes its reminder). Only a lead followed by words counts: "take a note" alone is
+// nothing, and a phrase that merely contains "note" stays a note.
+const NOTE = [
+  /^(?:please\s+)?(?:take|make|write|add|create|save)(?:\s+down)?\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?notes?(?:\s+(?:that|to|about|of|saying))?\s*[:,\-–]?\s+(.+)$/iu,
+  /^(?:please\s+)?note\s+(?:down\s+)?(?:that|to)\s+(.+)$/iu,
+  /^(?:please\s+)?(?:write|jot|put)\s+down\s+(?:that\s+)?(.+)$/iu,
+  /^(?:please\s+)?(?:add|save|put)\s+(.+?)\s+(?:to|in|into)\s+(?:my\s+)?notes$/iu,
+  /^(?:please\s+)?remind\s+me\s+(?:to\s+|about\s+|of\s+|that\s+)?(.+)$/iu,
+  /^(?:пожалуйста\s+)?(?:сделай|создай|запиши|добавь|напиши)\s+(?:новую\s+)?заметк\p{L}*(?:\s+(?:что|про|о|об))?\s*[:,\-–]?\s+(.+)$/iu,
+  /^(?:пожалуйста\s+)?запиши(?:\s+(?:что|мне|себе))?\s*[:,\-–]?\s+(.+)$/iu,
+  /^(?:пожалуйста\s+)?заметк[ау]\s*[:,\-–]?\s+(.+)$/iu,
+  /^(?:пожалуйста\s+)?напомни(?:ть)?(?:\s+мне)?(?:\s+(?:о|про|что|чтобы))?\s*[:,\-–]?\s+(.+)$/iu,
+];
+
+
 const clean = text => String(text || '').trim().replace(/^[\s,.;:!?…-]+|[\s,.;:!?…]+$/gu, '');
 const MIN_REQUEST = 4;
 
-// null: an ordinary note. Otherwise { kind: 'view' | 'media' | 'todo' | 'app' | 'telegram' | 'type' | 'agents', ... }.
+// null: an ordinary note. Otherwise { kind: 'view' | 'media' | 'translate' | 'todo' | 'note' | 'app' | 'telegram' | 'type' | 'agents', ... }.
 export function routeCommand(spoken) {
   let text = clean(spoken);
   if (!text) return null;
@@ -142,9 +183,20 @@ export function routeCommand(spoken) {
   for (const [command, pattern] of MEDIA) {
     if (pattern.test(text)) return { kind: 'media', command };
   }
+  for (const { pattern, language, words } of TRANSLATE) {
+    const match = pattern.exec(text);
+    const target = translateTarget(match?.[language]);
+    if (!target) continue;
+    const said = clean(match[words]);
+    return { kind: 'translate', target, text: COPIED.test(said) ? '' : Array.from(said).slice(0, MAX_TRANSLATE).join('') };
+  }
   for (const pattern of TODO) {
     const match = pattern.exec(text);
     if (match && clean(match[1])) return { kind: 'todo', text: clean(match[1]) };
+  }
+  for (const pattern of NOTE) {
+    const match = pattern.exec(text);
+    if (match && clean(match[1])) return { kind: 'note', text: clean(match[1]) };
   }
   for (const pattern of TELEGRAM) {
     const match = pattern.exec(text);
