@@ -280,7 +280,13 @@ static BOOL RelayMacIsDark(void) {
 // The Dock icon stays while the window is open. With the notch only, it can go (a setting), and a small menu bar item
 // takes its place: the way back to the window, and Quit. Without either, Relay would have no way to be opened or quit.
 - (void)applyActivationPolicy {
-    BOOL windowShown = self.window && (self.window.visible || self.window.miniaturized);
+    [self applyActivationPolicyIgnoringWindow:nil];
+}
+
+// A window that is closing can still report itself as visible while it fades out, which left the Dock icon behind.
+// The close handler therefore says which window is going away and it is not counted.
+- (void)applyActivationPolicyIgnoringWindow:(NSWindow *)closing {
+    BOOL windowShown = self.window && self.window != closing && (self.window.visible || self.window.miniaturized);
     BOOL hideDock = !windowShown && self.notch.enabled && [NSUserDefaults.standardUserDefaults boolForKey:RelayHideDockKey];
     NSApplicationActivationPolicy wanted = hideDock ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular;
     if (NSApp.activationPolicy != wanted) [NSApp setActivationPolicy:wanted];
@@ -322,8 +328,11 @@ static BOOL RelayMacIsDark(void) {
 }
 
 - (void)mainWindowWillClose:(NSNotification *)notification {
-    // The window is not hidden yet while this runs, so look again on the next turn.
-    dispatch_async(dispatch_get_main_queue(), ^{ [self applyActivationPolicy]; });
+    // The window is not hidden yet while this runs, so decide on the next turn, without counting the closing window.
+    NSWindow *closing = notification.object;
+    dispatch_async(dispatch_get_main_queue(), ^{ [self applyActivationPolicyIgnoringWindow:closing]; });
+    // Safety net: once the close animation is over, look at the real state again (it also covers a window reopened meanwhile).
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applyActivationPolicy]; });
 }
 
 - (void)notchPanelRequestsOpenRelayAt:(NSDictionary *)destination {

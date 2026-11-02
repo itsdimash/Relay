@@ -63,6 +63,11 @@ class DistributionTests(unittest.TestCase):
         self.assertIn('Relay.app'.encode('utf-16-be'), data)
         self.assertIn('Applications'.encode('utf-16-be'), data)
 
+    def test_closing_the_window_hides_the_dock_icon_without_waiting_for_the_fade_out(self):
+        native = (ROOT / 'packaging' / 'RelayNativeApp.m').read_text()
+        self.assertIn('applyActivationPolicyIgnoringWindow:closing', native)
+        self.assertIn('self.window != closing', native)
+
 
 if __name__ == '__main__':
     unittest.main()
