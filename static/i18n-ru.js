@@ -10,6 +10,12 @@
   var exact = {
     "Claude usage is refreshing or unavailable. Open Claude to check.": "Использование Claude обновляется или недоступно. Проверьте в Claude.",
     "Out of date": "Данные устарели",
+    "Claude is signed out. Run `claude auth login` in a terminal, then check again.": "Вы вышли из Claude. Выполните `claude auth login` в терминале и проверьте снова.",
+    "Relay could not find the Claude command-line tool. Install Claude Code or set RELAY_CLAUDE.": "Relay не нашёл программу Claude в командной строке. Установите Claude Code или задайте RELAY_CLAUDE.",
+    "Claude did not answer the usage check in time.": "Claude не ответил на проверку использования вовремя.",
+    "This version of Claude did not return a usage report. Update Claude Code.": "Эта версия Claude не вернула отчёт об использовании. Обновите Claude Code.",
+    "Claude returned a usage report Relay could not read.": "Claude вернул отчёт об использовании, который Relay не смог прочитать.",
+    "Claude usage checks are turned off (RELAY_NO_CLAUDE_USAGE_POLL).": "Проверка использования Claude отключена (RELAY_NO_CLAUDE_USAGE_POLL).",
     "Open Claude": "Открыть Claude",
     "Claude hasn't shared a fresh reading. Open its usage tray to refresh.": "Claude не передал свежие данные. Откройте его панель использования для обновления.",
     "No Codex activity in the last 20 minutes": "Нет активности Codex за последние 20 минут",

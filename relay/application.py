@@ -28,7 +28,7 @@ class Application:
         self.SHUTTING_DOWN = threading.Event()
         self.updater = Updater()
         # How much of each tool's usage limits is left; reads nothing until the first screen asks.
-        self.limits = limits.Limits(self.DATA / 'limits.json', providers.executable, read_codex=lambda _: None, read_claude=limits.read_claude_usage_status,
+        self.limits = limits.Limits(self.DATA / 'limits.json', providers.usage_executable, read_codex=lambda _: None, read_claude=limits.ClaudeUsage(),
                                     reader_sources={'claude': 'claude-usage-command'})
         self.limits.delays['claude'] = (60, 120)
         # Puts finished downloads on the Deliver shelf when that is switched on; looks at nothing until watching starts.

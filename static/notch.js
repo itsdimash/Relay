@@ -381,10 +381,10 @@ function renderLimits(limits) {
     limitRow(document, 'Claude', readings.claude, now, empty, officeLimitWindow),
     limitRow(document, 'Codex', readings.codex, now, empty, officeLimitWindow)
   );
-  if (!readings.claude || readings.claude.stale) {
+  if (!readings.claude || readings.claude.stale || readings.claude.problem) {
     const notice = document.createElement('div'); notice.className = 'limit-notice';
     const message = document.createElement('span');
-    message.textContent = "Claude usage is refreshing or unavailable. Open Claude to check.";
+    message.textContent = readings.claude?.problem || "Claude usage is refreshing or unavailable. Open Claude to check.";
     const open = document.createElement('button'); open.type = 'button'; open.textContent = 'Open Claude';
     open.addEventListener('click', () => tell({ type: 'open-provider', provider: 'claude' }));
     notice.append(message, open); $('limits').append(notice);

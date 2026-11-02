@@ -18,6 +18,9 @@ CODEX_RETRY_SECONDS = 600
 CLAUDE_REFRESH_SECONDS = 900   # Claude only reports usage when asked a question, so a reading is taken at most this often
 CLAUDE_RETRY_SECONDS = 1800
 CLAUDE_FRESH_SECONDS = 120
+CLAUDE_PROBE_FRESH_SECONDS = 1200   # a reading taken by asking Claude a question is renewed every 15 minutes
+CLAUDE_STATUS_RECHECK_SECONDS = 6 * 3600   # how long to skip /usage once this Claude version is known to list costs only
+CLAUDE_SIGNED_OUT = 'Claude is signed out. Run `claude auth login` in a terminal, then check again.'
 SESSION_MINUTES = 720  # windows up to 12 hours are the "session" window, longer ones the weekly one
 
 
@@ -140,14 +143,17 @@ def read_codex_limits(binary, timeout=10, popen=subprocess.Popen):
     return codex_reading(message.get('result'))
 
 
-def read_claude_limits(binary, timeout=60, run=subprocess.run):
+def read_claude_limits(binary, timeout=60, run=None):
     """Ask Claude one tiny question and read the usage it reports along with the answer.
 
     Claude Code only reports its limits while answering. The question is the cheapest model, no tools and an empty
     folder, so it reads nothing of yours. Returns the windows, or None if Claude did not report them.
     """
+    reader = read_claude_limits
+    reader.problem = ''
     if os.environ.get('RELAY_NO_CLAUDE_PROBE'):
         return None
+    run = run or subprocess.run
     env = os.environ.copy()
     env.pop('CLAUDECODE', None)
     args = [binary, '-p', '--output-format', 'stream-json', '--verbose', '--restricted', '--tools', 'Read',
@@ -165,43 +171,120 @@ def read_claude_limits(binary, timeout=60, run=subprocess.run):
             event = json.loads(line)
         except ValueError:
             continue
-        if isinstance(event, dict) and event.get('type') == 'rate_limit_event':
+        if not isinstance(event, dict):
+            continue
+        if event.get('type') == 'rate_limit_event':
             found = claude_reading(event) or found
+        elif event.get('error') == 'authentication_failed' or (event.get('type') == 'result' and event.get('is_error')
+                                                              and 'authenticate' in str(event.get('result'))):
+            reader.problem = CLAUDE_SIGNED_OUT
     return found
 
 
+ANSI_ESCAPES = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+USAGE_LABELS = (('session', r'Current session'), ('week', r'Current week(?: \(all models\))?(?!\s*\()'))
+
+
+def _is_local_report(report):
+    """True only for a report that came from Claude itself, with no model involved.
+
+    Older versions mark it `local_command: usage`. Newer ones drop the marker, so zero turns, zero cost, an empty
+    model list and zero tokens count as the same proof: a model cannot have written the text.
+    """
+    if not isinstance(report, dict) or report.get('is_error'):
+        return False
+    if report.get('num_turns') not in (0, None) or report.get('total_cost_usd') not in (0, None):
+        return False
+    if report.get('local_command') == 'usage':
+        return True
+    usage, models = report.get('usage'), report.get('modelUsage')
+    if report.get('num_turns') != 0 or report.get('total_cost_usd') != 0 or models != {} or not isinstance(usage, dict):
+        return False
+    return all(usage.get(key) == 0 for key in ('input_tokens', 'output_tokens'))
+
+
+def _usage_text(report):
+    """The report's text: its `result`, or else any text in it that carries the usage lines."""
+    if isinstance(report.get('result'), str):
+        return report['result']
+    found = []
+
+    def walk(value):
+        if isinstance(value, str):
+            if 'Current session' in value or 'Current week' in value:
+                found.append(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+    walk(report)
+    return '\n'.join(found) or None
+
+
 def claude_usage_status_reading(report):
-    """Accept only Claude's built-in /usage report, never a model-authored answer."""
-    if not isinstance(report, dict) or report.get('local_command') != 'usage' or report.get('is_error'):
+    """Accept only Claude's built-in /usage report, never a model-authored answer.
+
+    The marker is `local_command: usage` with no model turn and no cost. The wording around the numbers has
+    changed between Claude versions, so the percentages are found inside each labelled block rather than on one
+    exact line, and colour codes are ignored.
+    """
+    if not _is_local_report(report):
         return None
-    if report.get('num_turns') != 0 or report.get('total_cost_usd') != 0:
+    text = _usage_text(report)
+    if not text:
         return None
-    text = report.get('result')
-    if not isinstance(text, str):
-        return None
+    text = ANSI_ESCAPES.sub('', text)
     windows = {}
-    labels = [('session', r'Current session'), ('week', r'Current week \(all models\)')]
-    for name, label in labels:
-        match = re.search(r'^' + label + r':\s*(\d+(?:\.\d+)?)%\s+used(?:\s*[·|]\s*resets\s+([^\r\n]+))?\s*$', text, re.MULTILINE)
+    for name, label in USAGE_LABELS:
+        found = re.search(r'^[ \t]*' + label + r'[^\r\n]*', text, re.MULTILINE)
+        if not found:
+            continue
+        following = re.search(r'^[ \t]*Current ', text[found.end():], re.MULTILINE)
+        block = text[found.start(): found.end() + (following.start() if following else 400)]
+        match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*used', block)
         if not match:
             continue
         used = float(match.group(1))
         if not 0 <= used <= 100:
             continue
         windows[name] = {'left': round(100 - used), 'resets_at': None}
-        if match.group(2):
-            windows[name]['reset_label'] = match.group(2).strip()[:120]
+        reset = re.search(r'[Rr]esets?\s*:?\s*([^\r\n]+)', block[match.end():])
+        if reset:
+            windows[name]['reset_label'] = reset.group(1).strip()[:120]
     return windows or None
 
 
-def read_claude_usage_status(binary, timeout=15, run=subprocess.run):
+def _usage_report(stdout):
+    """The JSON report from Claude's output, even when a notice or a list of events surrounds it."""
+    text = (stdout or '').strip()
+    candidates = [text] + [line for line in reversed(text.splitlines()) if line.lstrip().startswith(('{', '['))]
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(value, list):
+            value = next((item for item in value if isinstance(item, dict) and (item.get('local_command') == 'usage' or item.get('type') == 'result')), None)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def read_claude_usage_status(binary, timeout=30, run=None):
     """The official local /usage command performs zero model turns and reads plan limits.
 
     Keep provider authentication inside Claude. No credentials, user prompts, project
     tools, settings, MCP servers, or conversational history are read by Relay.
-    Unsupported versions and failed/unverified reports return no current reading.
+    Unsupported versions and failed/unverified reports return no current reading, and
+    `read_claude_usage_status.problem` says in plain words why (empty after a success).
     """
+    reader = read_claude_usage_status
+    reader.problem, reader.sample, reader.costs_only = '', '', False
+    run = run or subprocess.run
     if os.environ.get('RELAY_NO_CLAUDE_USAGE_POLL'):
+        reader.problem = 'Claude usage checks are turned off (RELAY_NO_CLAUDE_USAGE_POLL).'
         return None
     environment = os.environ.copy()
     environment.pop('CLAUDECODE', None)
@@ -213,10 +296,74 @@ def read_claude_usage_status(binary, timeout=15, run=subprocess.run):
     try:
         with tempfile.TemporaryDirectory(prefix='relay-usage-status-') as folder:
             result = run(args, cwd=folder, env=environment, capture_output=True, text=True, timeout=timeout)
-        if result.returncode != 0:
-            return None
-        return claude_usage_status_reading(json.loads(result.stdout))
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+    except subprocess.TimeoutExpired:
+        reader.problem = 'Claude did not answer the usage check in time.'
+        return None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError) as error:
+        reader.problem = 'Relay could not start Claude to check usage (%s).' % (str(error)[:80] or type(error).__name__)
+        return None
+    stdout, stderr = getattr(result, 'stdout', '') or '', getattr(result, 'stderr', '') or ''
+    reader.sample = ('stdout: ' + ANSI_ESCAPES.sub('', stdout)[:900] + '\nstderr: ' + ANSI_ESCAPES.sub('', stderr)[:600])
+    if result.returncode != 0:
+        first = next((line.strip() for line in ANSI_ESCAPES.sub('', stderr or stdout).splitlines() if line.strip()), '')
+        reader.problem = 'Claude refused the usage check%s.' % (': ' + first[:100] if first else ' (exit code %s)' % result.returncode)
+        return None
+    report = _usage_report(stdout)
+    if report is None:
+        reader.problem = 'This version of Claude did not return a usage report. Update Claude Code.'
+        return None
+    windows = claude_usage_status_reading(report)
+    if not windows:
+        # Some versions answer `-p /usage` with session costs only (a local report that has no plan limits in it).
+        reader.costs_only = _is_local_report(report) and 'Total cost' in (_usage_text(report) or '')
+        reader.problem = ('This version of Claude lists costs, not plan limits, in /usage.' if reader.costs_only
+                          else 'Claude returned a usage report Relay could not read.')
+        # The start of the raw output is mostly counters; keep what matters for fixing the parser.
+        reader.sample = 'keys: %s\nlocal_command: %r\nresult: %s' % (', '.join(map(str, report))[:400], report.get('local_command'),
+                                                                   ANSI_ESCAPES.sub('', repr(_usage_text(report) or report.get('result')))[:1200])
+    return windows
+
+
+class ClaudeUsage:
+    """Claude's plan usage: the free /usage report when it lists plan limits, otherwise a tiny question.
+
+    Newer Claude versions answer `-p /usage` with session costs only. Claude still reports the plan windows
+    alongside any answer, so the fallback asks one tiny question (see read_claude_limits) and reads them from that.
+    That costs a little of your Claude usage, so it is done at most every 15 minutes, and /usage is not tried again
+    for hours once a version is known to list costs only. `source`, `delays`, `problem` and `sample` describe the
+    last reading for Limits.
+    """
+
+    def __init__(self, status=None, probe=None, clock=time.time):
+        self.status = status or read_claude_usage_status
+        self.probe = probe or read_claude_limits
+        self.clock = clock
+        self.status_after = 0
+        self.source, self.delays, self.problem, self.sample = None, None, '', ''
+
+    def __call__(self, binary):
+        now = self.clock()
+        self.problem = self.sample = ''
+        if now >= self.status_after:
+            windows = self.status(binary)
+            if windows:
+                self.source, self.delays = 'claude-usage-command', (60, 120)
+                return windows
+            self.problem, self.sample = getattr(self.status, 'problem', ''), getattr(self.status, 'sample', '')
+            if getattr(self.status, 'costs_only', False):
+                self.status_after = now + CLAUDE_STATUS_RECHECK_SECONDS
+        windows = self.probe(binary)
+        if windows:
+            self.source, self.delays, self.problem = 'claude-code-probe', (CLAUDE_REFRESH_SECONDS, CLAUDE_RETRY_SECONDS), ''
+            return windows
+        self.delays = (CLAUDE_REFRESH_SECONDS, 600)
+        if getattr(self.probe, 'problem', '') == CLAUDE_SIGNED_OUT:
+            self.problem = CLAUDE_SIGNED_OUT   # the cause, not the symptom: nothing else will work until Claude is signed in
+            self.delays = (CLAUDE_REFRESH_SECONDS, 90)   # so the numbers return soon after signing in
+        elif os.environ.get('RELAY_NO_CLAUDE_PROBE'):
+            self.problem = (self.problem or 'Claude did not list plan limits.') + ' Asking Claude a question is turned off (RELAY_NO_CLAUDE_PROBE).'
+        else:
+            self.problem = (self.problem + ' ' if self.problem else '') + 'Asking Claude a question did not return plan limits.'
         return None
 
 
@@ -235,6 +382,7 @@ class Limits:
         self.data = None
         self.next = {'claude': 0, 'codex': 0}
         self.busy = set()
+        self.problems = {}
 
     def _load(self):
         if self.data is None:
@@ -265,13 +413,38 @@ class Limits:
 
     def refresh(self, tool):
         binary = self.executable(tool)
-        windows = self.readers[tool](binary) if binary else None
+        reader = self.readers[tool]
+        windows = reader(binary) if binary else None
+        if tool == 'claude':
+            if windows:
+                problem = ''
+            elif not binary:
+                problem = 'Relay could not find the Claude command-line tool. Install Claude Code or set RELAY_CLAUDE.'
+            else:
+                problem = getattr(reader, 'problem', '') or 'Claude did not report its usage.'
+            self._note_problem(problem, getattr(reader, 'sample', '') if binary and not windows else '')
+        if getattr(reader, 'delays', None):
+            self.delays[tool] = reader.delays
         refresh_after, retry_after = self.delays[tool]
         with self.lock:
             self.busy.discard(tool)
             self.next[tool] = self.clock() + (refresh_after if windows else retry_after)
         if windows:
-            self._store(tool, windows, source=self.reader_sources.get(tool))
+            self._store(tool, windows, source=getattr(reader, 'source', None) or self.reader_sources.get(tool))
+
+    def _note_problem(self, problem, sample=''):
+        """Keep the reason Claude's usage is missing, and the raw report, so the screen and the log can show why."""
+        with self.lock:
+            self.problems['claude'] = problem
+        debug = self.path.with_name('limits-claude-debug.txt')
+        try:
+            if problem and sample:
+                debug.parent.mkdir(parents=True, exist_ok=True)
+                debug.write_text('%s\n%s\n' % (problem, sample))
+            elif not problem:
+                debug.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _maybe_refresh(self, tool):
         with self.lock:
@@ -304,7 +477,8 @@ class Limits:
                 item['source'] = reading['source']
             if tool == 'claude':
                 seen = reading.get('seen_at')
-                item['stale'] = not isinstance(seen, (int, float)) or not 0 <= now - seen <= CLAUDE_FRESH_SECONDS
+                fresh = CLAUDE_PROBE_FRESH_SECONDS if reading.get('source') == 'claude-code-probe' else CLAUDE_FRESH_SECONDS
+                item['stale'] = not isinstance(seen, (int, float)) or not 0 <= now - seen <= fresh
             for name in ('session', 'week'):
                 window = reading.get(name)
                 if not isinstance(window, dict):
@@ -314,4 +488,9 @@ class Limits:
                     continue
                 item[name] = window
             result[tool] = item
+        with self.lock:
+            problem = self.problems.get('claude')
+        claude = result['claude']
+        if problem and (claude is None or claude.get('stale') or not (claude.get('session') or claude.get('week'))):
+            result['claude'] = {**(claude or {}), 'problem': problem}
         return result

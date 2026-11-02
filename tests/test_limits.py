@@ -267,6 +267,14 @@ class ClaudeQuestionTests(unittest.TestCase):
             raise OSError('no such file')
         self.assertIsNone(read_claude_limits('/nope', run=broken))
 
+    def test_a_signed_out_claude_is_named_as_the_reason(self):
+        stdout = json.dumps({'type': 'assistant', 'error': 'authentication_failed'}) + '\n' + json.dumps(
+            {'type': 'result', 'is_error': True, 'result': 'Failed to authenticate: OAuth session expired'}) + '\n'
+        self.assertIsNone(read_claude_limits('/bin/claude', run=self.fake_run(stdout, [])))
+        self.assertIn('claude auth login', read_claude_limits.problem)
+        read_claude_limits('/bin/claude', run=self.fake_run('', []))
+        self.assertEqual(read_claude_limits.problem, '')
+
     def test_it_can_be_switched_off(self):
         calls = []
         os.environ['RELAY_NO_CLAUDE_PROBE'] = '1'

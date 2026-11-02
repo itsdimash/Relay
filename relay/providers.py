@@ -28,6 +28,28 @@ def executable(name):
     return next((p for p in candidates if p and Path(p).is_file() and os.access(p, os.X_OK)), None)
 
 
+def claude_desktop_cli(home=None):
+    """The Claude Code that the Claude desktop app downloads for itself, for people with no separate install."""
+    base = Path(home) / 'Library/Application Support/Claude/claude-code' if home else Path.home() / 'Library/Application Support/Claude/claude-code'
+    found = []
+    for pattern in ('*/claude', '*/claude.app/Contents/MacOS/claude'):
+        try:
+            found += [p for p in base.glob(pattern) if p.is_file() and os.access(p, os.X_OK)]
+        except OSError:
+            continue
+
+    def newest(path):
+        folder = path.relative_to(base).parts[0]
+        numbers = tuple(int(part) if part.isdigit() else 0 for part in folder.split('.'))
+        return numbers, path.stat().st_mtime
+    return str(max(found, key=newest)) if found else None
+
+
+def usage_executable(name):
+    """Where to ask for usage numbers: the normal tool, or for Claude also the desktop app's own copy."""
+    return executable(name) or (claude_desktop_cli() if name == 'claude' else None)
+
+
 def model_catalog():
     levels = ['low', 'medium', 'high', 'xhigh', 'max']
     claude = [{'id': name, 'label': name.capitalize(), 'efforts': levels[:]} for name in ['haiku', 'sonnet', 'opus', 'fable']]
