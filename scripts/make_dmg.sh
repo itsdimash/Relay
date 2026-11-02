@@ -19,6 +19,12 @@ trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/Relay.app"
 ln -s /Applications "$STAGE/Applications"
 
+# Finder window layout (scripts/make_dmg_layout.py): Relay on the left, the Applications shortcut on the right.
+LAYOUT="$PROJECT_ROOT/scripts/dmg/DS_Store"
+if [[ -f "$LAYOUT" ]]; then
+  cp "$LAYOUT" "$STAGE/.DS_Store"
+fi
+
 rm -f "$DMG"
 hdiutil create -volname "Install Relay" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
 

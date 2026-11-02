@@ -51,6 +51,18 @@ class DistributionTests(unittest.TestCase):
         build = (ROOT / 'scripts' / 'build_macos_app.sh').read_text()
         self.assertIn('-framework WebKit', build)
 
+    def test_disk_image_has_the_applications_shortcut_and_a_window_layout(self):
+        script = (ROOT / 'scripts' / 'make_dmg.sh').read_text()
+        self.assertIn('ln -s /Applications "$STAGE/Applications"', script)
+        layout = ROOT / 'scripts' / 'dmg' / 'DS_Store'
+        self.assertTrue(layout.is_file())
+        self.assertIn('scripts/dmg/DS_Store', script)
+        data = layout.read_bytes()
+        self.assertEqual(data[4:8], b'Bud1')  # a real Finder .DS_Store
+        # Relay.app and Applications are positioned in the window (UTF-16 names inside the file).
+        self.assertIn('Relay.app'.encode('utf-16-be'), data)
+        self.assertIn('Applications'.encode('utf-16-be'), data)
+
 
 if __name__ == '__main__':
     unittest.main()
