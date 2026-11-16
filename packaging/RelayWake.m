@@ -1,6 +1,7 @@
 #import "RelayWake.h"
 #import "RelayNowPlaying.h"
 #import <AVFoundation/AVFoundation.h>
+#import <Cocoa/Cocoa.h>
 #import <Speech/Speech.h>
 
 static const NSTimeInterval TaskSeconds = 45;        // a recognition task is renewed before Apple's limit of about a minute
@@ -9,6 +10,9 @@ static const NSTimeInterval QuietSeconds = 1.4;      // no new words for this lo
 static const NSTimeInterval RestartDelay = 0.6;      // a recognition task that ended starts again after this (never in a tight loop)
 static const NSTimeInterval ResumeDelay = 0.5;       // after dictation or speech, the microphone is given a moment to settle
 static const NSUInteger MaxRequestLength = 600;
+static const NSTimeInterval WakeGraceSeconds = 90;   // after the Mac wakes, the microphone and speech recognition need a while to come back
+static const NSTimeInterval WakeRetryDelay = 3;      // ... so a start that fails in that time is tried again instead of switching "Hey Relay" off
+static const NSUInteger MaxWakeRetries = 12;
 
 // "Hey Relay" as the recognizer tends to write it, and the same in Russian. Either language is accepted whichever language
 // is being listened for, because a person may say the English name in a Russian sentence and the other way round.
@@ -56,6 +60,10 @@ static NSString *WordsAfterWake(NSString *text) {
 @property(nonatomic, strong) NSTimer *quietTimer;
 @property(nonatomic, strong) NSTimer *firstTimer;
 @property(nonatomic, strong) id configObserver;
+@property(nonatomic, strong) id sleepObserver;
+@property(nonatomic, strong) id wakeObserver;
+@property(nonatomic, strong) NSDate *wokeAt;         // when the Mac last woke from sleep
+@property(nonatomic) NSUInteger wakeRetries;         // starts that failed since then and were tried again
 @property(nonatomic) NSUInteger quickFailures;      // recognition tasks in a row that ended with an error almost at once
 @property(nonatomic, strong) NSDate *taskStarted;
 @end
@@ -72,12 +80,33 @@ static NSString *WordsAfterWake(NSString *text) {
             [strongSelf teardownAudio];
             [strongSelf beginAfter:1.0];
         }];
+        // Sleep: the microphone is let go before the Mac sleeps, because the audio engine does not survive it. Wake: listen again,
+        // after a moment for the audio system to come back. "On" stays on; only the listening is rebuilt.
+        NSNotificationCenter *workspace = NSWorkspace.sharedWorkspace.notificationCenter;
+        _sleepObserver = [workspace addObserverForName:NSWorkspaceWillSleepNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            RelayWake *strongSelf = weakSelf;
+            if (strongSelf && strongSelf.enabled) [strongSelf teardownAudio];
+        }];
+        _wakeObserver = [workspace addObserverForName:NSWorkspaceDidWakeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            RelayWake *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf.wokeAt = [NSDate date];
+            strongSelf.wakeRetries = 0;
+            strongSelf.quickFailures = 0;
+            if (!strongSelf.enabled) return;
+            [RelayNowPlaying log:@"wake: the Mac woke up, listening again"];
+            [strongSelf teardownAudio]; // in case the sleep notice was missed
+            if (!strongSelf.paused) [strongSelf beginAfter:2.0];
+        }];
     }
     return self;
 }
 
 - (void)dealloc {
     if (_configObserver) [NSNotificationCenter.defaultCenter removeObserver:_configObserver];
+    NSNotificationCenter *workspace = NSWorkspace.sharedWorkspace.notificationCenter;
+    if (_sleepObserver) [workspace removeObserver:_sleepObserver];
+    if (_wakeObserver) [workspace removeObserver:_wakeObserver];
 }
 
 - (void)report:(NSString *)state text:(NSString *)text error:(NSString *)error {
@@ -148,7 +177,20 @@ static NSString *WordsAfterWake(NSString *text) {
     if (wasCollecting) [self report:@"command" text:@"" error:nil]; // the page stops showing that it is listening
 }
 
+// Just after the Mac wakes, the microphone often has no input yet and the recognizer says it is unavailable. That is no reason to
+// switch "Hey Relay" off for good (it would stay off until the person turned it on again): for a while after waking, try again.
+- (BOOL)retryAfterWake:(NSString *)code {
+    if (!self.enabled || !self.wokeAt || -[self.wokeAt timeIntervalSinceNow] > WakeGraceSeconds || self.wakeRetries >= MaxWakeRetries) return NO;
+    self.wakeRetries += 1;
+    [RelayNowPlaying log:[NSString stringWithFormat:@"wake: %@ right after waking, trying again (%lu)", code, (unsigned long)self.wakeRetries]];
+    [self teardownAudio];
+    self.quickFailures = 0;
+    [self beginAfter:WakeRetryDelay];
+    return YES;
+}
+
 - (void)failWith:(NSString *)code {
+    if (([code isEqualToString:@"unavailable"] || [code isEqualToString:@"failed"] || [code isEqualToString:@"ondevice"]) && [self retryAfterWake:code]) return;
     [RelayNowPlaying log:[NSString stringWithFormat:@"wake: stopped, %@", code]];
     self.enabled = NO;
     [self teardownAudio];

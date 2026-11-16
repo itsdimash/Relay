@@ -15,7 +15,7 @@ class StartupTests(unittest.TestCase):
         self.assertNotIn('buildWindowIfNeeded', ready)                   # the window is not built here
         show = NATIVE.split('- (void)showMainWindow', 1)[1].split('\n}\n', 1)[0]
         self.assertIn('[self buildWindowIfNeeded]', show)
-        self.assertIn('NSApplicationActivationPolicyRegular', show)      # a window needs a normal app
+        self.assertIn('[self applyActivationPolicy]', show)              # a normal app, unless the Dock icon is hidden on purpose
 
     def test_the_first_start_ever_shows_the_window(self):
         main = NATIVE.split('int main(', 1)[1]
@@ -29,7 +29,8 @@ class StartupTests(unittest.TestCase):
     def test_hiding_the_dock_always_leaves_a_way_to_open_and_quit(self):
         policy = NATIVE.split('- (void)applyActivationPolicy', 1)[1].split('- (void)showStatusItem', 1)[0]
         self.assertIn('NSApplicationActivationPolicyAccessory', policy)
-        self.assertIn('!windowShown', policy)                            # never while the window is open
+        self.assertNotIn('window', policy.lower().replace('relaykey', ''))  # the window does not bring the icon back: the setting means what it says
+        self.assertIn('self.notch.enabled', policy)                      # without the notch the window is all there is
         self.assertIn('[self showStatusItem:hideDock]', policy)          # the menu bar item exists exactly then
         item = NATIVE.split('- (void)showStatusItem', 1)[1].split('- (void)openFromStatusItem', 1)[0]
         self.assertIn('Open Relay', item)
@@ -50,7 +51,7 @@ class StartupTests(unittest.TestCase):
 
     def test_the_settings_are_in_the_menu(self):
         for title in ('Open Relay at Login', 'Open the Window When Relay Starts',
-                      'Hide the Dock Icon While Only the Notch Is Showing'):
+                      'Hide the Dock Icon'):
             self.assertIn(title, NATIVE)
 
     def test_the_window_header_has_a_startup_menu_that_asks_the_app(self):

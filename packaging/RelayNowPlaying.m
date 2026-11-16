@@ -119,6 +119,15 @@ static double TimestampMilliseconds(id value) {
     [self publish:nil];
 }
 
+- (void)restart {
+    if (!self.wanted) return;
+    self.generation += 1; // late callbacks and restarts planned before the sleep belong to the old stream
+    [self terminateTask];
+    self.failures = 0;
+    [RelayNowPlaying log:@"restart: the Mac woke up"];
+    [self launchStream];
+}
+
 - (void)terminateTask {
     NSTask *task = self.task;
     self.task = nil;

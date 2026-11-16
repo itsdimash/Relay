@@ -17,7 +17,7 @@ static NSString *const RelayThemeChoiceKey = @"RelayThemeChoice";   // "system",
 
 // Startup. Relay is a notch app first: it starts with the notch only, and the window opens when the person asks for it.
 static NSString *const RelayOpenWindowAtLaunchKey = @"RelayOpenWindowAtLaunch"; // YES: also open the main window when Relay starts (default NO)
-static NSString *const RelayHideDockKey = @"RelayHideDockWhenNotchOnly";        // YES: no Dock icon while only the notch is showing (default NO)
+static NSString *const RelayHideDockKey = @"RelayHideDockWhenNotchOnly";        // YES: no Dock icon at all, also while the window is open (default NO)
 static NSString *const RelayLaunchedBeforeKey = @"RelayLaunchedBefore";         // the very first start opens the window once, so a new person sees the app
 static NSString *const RelayWelcomeKey = @"RelayWelcomeAnimation";              // YES (default): a light animation around the notch when Relay starts
 
@@ -49,7 +49,7 @@ static BOOL RelayMacIsDark(void) {
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSURL *serverURL;
 @property(nonatomic, strong) RelayNotchPanel *notch;
-@property(nonatomic, strong) NSStatusItem *statusItem;   // only while the Dock icon is hidden: the way back in, and Quit
+@property(nonatomic, strong) NSStatusItem *statusItem;   // while the Dock icon is hidden: the way back in, and Quit
 @property(nonatomic) BOOL opensWindowAtLaunch;           // decided in main(), before the app runs
 @property(nonatomic) BOOL wantsWindow;                   // the window was asked for before the engine was ready
 @property(nonatomic, copy) NSString *pendingHash;        // where the window should open, when it is built for a notch shortcut
@@ -94,7 +94,7 @@ static BOOL RelayMacIsDark(void) {
     atLogin.target = self;
     NSMenuItem *withWindow = [startupMenu addItemWithTitle:@"Open the Window When Relay Starts" action:@selector(toggleOpenWindowAtLaunch:) keyEquivalent:@""];
     withWindow.target = self;
-    NSMenuItem *hideDock = [startupMenu addItemWithTitle:@"Hide the Dock Icon While Only the Notch Is Showing" action:@selector(toggleHideDock:) keyEquivalent:@""];
+    NSMenuItem *hideDock = [startupMenu addItemWithTitle:@"Hide the Dock Icon" action:@selector(toggleHideDock:) keyEquivalent:@""];
     hideDock.target = self;
     NSMenuItem *welcome = [startupMenu addItemWithTitle:@"Play an Animation When Relay Starts" action:@selector(toggleWelcome:) keyEquivalent:@""];
     welcome.target = self;
@@ -277,17 +277,11 @@ static BOOL RelayMacIsDark(void) {
 
 #pragma mark - Dock icon and menu bar item
 
-// The Dock icon stays while the window is open. With the notch only, it can go (a setting), and a small menu bar item
-// takes its place: the way back to the window, and Quit. Without either, Relay would have no way to be opened or quit.
+// "Hide the Dock icon" means what it says: with it on there is no Dock icon, whether the window is open or only the notch shows.
+// A small menu bar item takes its place: the way back to the window, and Quit. Without either, Relay would have no way to be
+// opened or quit. (The window is not looked at: it used to bring the icon back while it was open, which the setting did not say.)
 - (void)applyActivationPolicy {
-    [self applyActivationPolicyIgnoringWindow:nil];
-}
-
-// A window that is closing can still report itself as visible while it fades out, which left the Dock icon behind.
-// The close handler therefore says which window is going away and it is not counted.
-- (void)applyActivationPolicyIgnoringWindow:(NSWindow *)closing {
-    BOOL windowShown = self.window && self.window != closing && (self.window.visible || self.window.miniaturized);
-    BOOL hideDock = !windowShown && self.notch.enabled && [NSUserDefaults.standardUserDefaults boolForKey:RelayHideDockKey];
+    BOOL hideDock = self.notch.enabled && [NSUserDefaults.standardUserDefaults boolForKey:RelayHideDockKey];
     NSApplicationActivationPolicy wanted = hideDock ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular;
     if (NSApp.activationPolicy != wanted) [NSApp setActivationPolicy:wanted];
     [self showStatusItem:hideDock];
@@ -328,10 +322,9 @@ static BOOL RelayMacIsDark(void) {
 }
 
 - (void)mainWindowWillClose:(NSNotification *)notification {
-    // The window is not hidden yet while this runs, so decide on the next turn, without counting the closing window.
-    NSWindow *closing = notification.object;
-    dispatch_async(dispatch_get_main_queue(), ^{ [self applyActivationPolicyIgnoringWindow:closing]; });
-    // Safety net: once the close animation is over, look at the real state again (it also covers a window reopened meanwhile).
+    // Nothing about the Dock depends on the window now; this only makes sure the policy and the menu bar item are as the setting says.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self applyActivationPolicy]; });
+    // Safety net: once the close animation is over, look at the real state again.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self applyActivationPolicy]; });
 }
 
@@ -353,11 +346,10 @@ static BOOL RelayMacIsDark(void) {
 - (void)showMainWindow {
     if (!self.serverURL) { self.wantsWindow = YES; return; } // the engine is still starting: the window opens when it is ready
     [self buildWindowIfNeeded];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [self applyActivationPolicy]; // a Dock icon only when the person has not hidden it
     if (self.window.miniaturized) [self.window deminiaturize:nil];
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
-    [self showStatusItem:NO];
 }
 
 #pragma mark - Move to Applications
@@ -778,7 +770,7 @@ int main(int argc, const char *argv[]) {
         BOOL firstStart = ![defaults objectForKey:RelayLaunchedBeforeKey] && ![defaults objectForKey:RelayThemeChoiceKey];
         BOOL opensWindow = firstStart || [defaults boolForKey:RelayOpenWindowAtLaunchKey] || ![defaults boolForKey:RelayNotchEnabledKey];
         RelayApplicationDelegate.opensWindowAtLaunch = opensWindow;
-        BOOL hidesDock = !opensWindow && [defaults boolForKey:RelayHideDockKey];
+        BOOL hidesDock = [defaults boolForKey:RelayHideDockKey] && [defaults boolForKey:RelayNotchEnabledKey]; // also when the window opens at start
         [app setActivationPolicy:hidesDock ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
         [app run];
     }

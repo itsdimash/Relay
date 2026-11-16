@@ -20,6 +20,9 @@
 + (void)log:(NSString *)message;
 - (void)start;
 - (void)stop;
+// After the Mac wakes from sleep: the adapter is stopped and started again, and its failure count begins from zero.
+// Does nothing when the stream was not asked for (stop was called, or start never was).
+- (void)restart;
 // "toggle", "next" or "previous". Anything else is ignored.
 - (void)sendCommand:(NSString *)command;
 @end

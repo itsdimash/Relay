@@ -115,7 +115,7 @@
     "Open this window at start": "Открывать это окно при запуске",
     "Off: only the notch starts. Open this window from the Office tab of the notch.": "Выключено: запускается только вырез. Окно открывается из вкладки «Офис» выреза.",
     "Hide the Dock icon": "Скрыть значок в Dock",
-    "While only the notch is showing. A Relay icon in the menu bar lets you open and quit it.": "Пока виден только вырез. Значок Relay в строке меню позволяет открыть и закрыть приложение.",
+    "No Dock icon, even while this window is open. A Relay icon in the menu bar lets you open and quit it.": "Без значка в Dock, даже когда это окно открыто. Значок Relay в строке меню позволяет открыть и закрыть приложение.",
     "Play an animation at start": "Анимация при запуске",
     "A light runs around the notch, so you notice that Relay has started": "Свет пробегает по вырезу, чтобы вы заметили, что Relay запустился",
     "Notch": "Панель выреза",

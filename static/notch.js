@@ -1951,5 +1951,25 @@ setInterval(poll, 1000);
 if (new URLSearchParams(location.search).get('view') === 'office') window.relayPanelMode({ mode: 'full', view: 'office' });
 setInterval(tickTimer, 1000);
 setInterval(tickProgress, 500);
+
+// The Mac slept (the lid was closed): the timers stood still and the connection to the engine may have been cut. Everything is asked
+// for again, and the "Hey Relay" choice is sent to the app again so that it listens. The app calls this after every wake, and the gap
+// in the one-second beat below catches a sleep that the app did not report.
+function resumeAfterSleep() {
+  poll();
+  loadNotes();
+  loadDeliver();
+  wake.sent = null; // not '': that would announce "Hey Relay is on" again
+  syncWake();
+  if (!document.hidden && view === 'office') room.start();
+}
+window.relayResume = resumeAfterSleep;
+let lastBeat = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  const gap = now - lastBeat;
+  lastBeat = now;
+  if (gap > 10000) resumeAfterSleep();
+}, 1000);
 // A file may have been moved or deleted since; with Auto-catch or a time limit on, the shelf changes by itself on any tab.
 setInterval(() => { if ((view === 'deliver' || deliverSettings.auto_catch || deliverSettings.expire_hours) && mode !== 'pill') loadDeliver(); }, 3000);

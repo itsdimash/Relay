@@ -277,6 +277,7 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 @property(nonatomic) NSInteger dragBoardCount;              // the drag board's change count while no mouse button was down
 @property(nonatomic) NSInteger dragOutIdleTicks;            // pointer ticks since a drag out last had the mouse button down
 @property(nonatomic, strong) NSPanel *catcher;              // waits for a drag with files in the zone around the notch
+@property(nonatomic) NSUInteger recoveryToken;              // the latest wake or screen change; older planned recoveries are dropped
 @end
 
 @implementation RelayNotchPanel
@@ -289,6 +290,7 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
         [self buildWindow];
         [self buildCatcher];
         [self installMonitors];
+        [self observeSleepAndScreens];
         _nowPlaying = [[RelayNowPlaying alloc] init];
         __weak RelayNotchPanel *weakSelf = self;
         _nowPlaying.handler = ^(NSDictionary *state) { [weakSelf pushNowPlaying:state]; };
@@ -304,7 +306,122 @@ static NSArray<NSString *> *DroppedFilePaths(id<NSDraggingInfo> info) {
 }
 
 - (void)dealloc {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
     [self removeMonitors];
+}
+
+#pragma mark - Sleep, wake and screens
+
+// Closing the Mac's lid stops timers, audio and the music stream, and may change the screens. Nothing in the notch used to notice, so it
+// stayed as the sleep left it. Now the whole notch is rebuilt after a wake, and re-placed whenever the screens change.
+- (void)observeSleepAndScreens {
+    NSNotificationCenter *workspace = NSWorkspace.sharedWorkspace.notificationCenter;
+    [workspace addObserver:self selector:@selector(systemDidWake:) name:NSWorkspaceDidWakeNotification object:nil];
+    [workspace addObserver:self selector:@selector(systemDidWake:) name:NSWorkspaceScreensDidWakeNotification object:nil];
+    [workspace addObserver:self selector:@selector(systemDidWake:) name:NSWorkspaceSessionDidBecomeActiveNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(screensDidChange:)
+                                               name:NSApplicationDidChangeScreenParametersNotification object:nil];
+}
+
+// Several notices come together after a wake, and the Mac is not ready at once (screens, network, audio come back one by one):
+// the recovery runs a moment later, and once more later still, for whatever was not ready the first time.
+- (void)systemDidWake:(NSNotification *)note {
+    NSUInteger token = ++self.recoveryToken;
+    [RelayNowPlaying log:[NSString stringWithFormat:@"wake: %@", note.name]];
+    __weak RelayNotchPanel *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (strongSelf && strongSelf.recoveryToken == token) [strongSelf recoverAfterWake:YES];
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (strongSelf && strongSelf.recoveryToken == token) [strongSelf recoverAfterWake:NO];
+    });
+}
+
+- (void)screensDidChange:(NSNotification *)note {
+    NSUInteger token = ++self.recoveryToken;
+    __weak RelayNotchPanel *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (strongSelf && strongSelf.recoveryToken == token) [strongSelf refreshScreenPlacement];
+    });
+}
+
+// The panel and the light around the notch follow the screens as they are now, not as they were before the change.
+- (void)refreshScreenPlacement {
+    [self.catcher orderOut:nil]; // the next pointer tick brings it back where it belongs
+    NSScreen *screen = [self screenForPoint:NSEvent.mouseLocation] ?: NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+    if (self.shown) {
+        if (screen) self.screen = screen; // the old screen object may be gone
+        NSScreen *active = [self activeScreen];
+        if (active) {
+            self.contentSize = [self sizeForMode:self.mode screen:active];
+            self.shownSize = self.contentSize;
+            if (!self.frameTimer && !self.sizeTimer) [self applyProgress:self.progress];
+            [self pushMode];
+        }
+        if (!self.window.visible) [self.window orderFrontRegardless];
+    } else {
+        self.screen = nil; // chosen again when the panel opens
+    }
+    [self.glow screensChanged];
+    [self refreshGlow];
+}
+
+// Brings everything that sleep can break back to life. Safe to run twice. heavy: also restarts the music stream and checks the page.
+- (void)recoverAfterWake:(BOOL)heavy {
+    [RelayNowPlaying log:[NSString stringWithFormat:@"wake: recovering the notch (%@)", heavy ? @"first pass" : @"second pass"]];
+    // Keys and buttons that were held when the lid closed will never be reported as let go.
+    self.commandDown = NO;
+    self.commandTapValid = NO;
+    self.lastTapAt = 0;
+    if (self.optionDown || self.voiceKeyActive) {
+        BOOL talking = self.voiceKeyActive;
+        self.optionDown = NO;
+        self.optionValid = NO;
+        self.voiceKeyActive = NO;
+        if (talking) [self voiceKeyChanged:NO];
+    }
+    self.draggingOut = NO;
+    self.dragOutIdleTicks = 0;
+    [self cancelTimer:&_showTimer];
+    // The pointer watch: the timer, the pointer monitor and the App Nap guard are made again.
+    [self removeMonitors];
+    [self installMonitors];
+    [self refreshScreenPlacement];
+    if (self.enabled) {
+        if (heavy) [self.nowPlaying restart];
+        if (!self.agentTimer) [self startAmbient];
+        else [self pollAgents];
+    }
+    [self checkPageAfterWake];
+}
+
+// The panel's page lives in a separate web process, which the system may have stopped or ended during the sleep.
+// A page that does not answer, or that never finished loading, is loaded again; one that answers is told to catch up.
+- (void)checkPageAfterWake {
+    WKWebView *webView = self.webView;
+    if (!webView) return;
+    __block BOOL answered = NO;
+    __weak RelayNotchPanel *weakSelf = self;
+    void (^reload)(NSString *) = ^(NSString *why) {
+        RelayNotchPanel *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.webView.isLoading) return;
+        [RelayNowPlaying log:[NSString stringWithFormat:@"wake: loading the panel page again (%@)", why]];
+        [strongSelf.webView loadRequest:[NSURLRequest requestWithURL:strongSelf.pageURL]];
+    };
+    [webView evaluateJavaScript:@"typeof window.relayPanelMode === 'function' && typeof window.relayResume === 'function'"
+              completionHandler:^(id result, NSError *error) {
+        answered = YES;
+        if (error) { reload(@"error"); return; }
+        if (![result boolValue]) { reload(@"page not ready"); return; }
+        [weakSelf callPage:@"window.relayResume();" arguments:@{}];
+    }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!answered) reload(@"no answer");
+    });
 }
 
 #pragma mark - Setting

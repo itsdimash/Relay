@@ -63,10 +63,14 @@ class DistributionTests(unittest.TestCase):
         self.assertIn('Relay.app'.encode('utf-16-be'), data)
         self.assertIn('Applications'.encode('utf-16-be'), data)
 
-    def test_closing_the_window_hides_the_dock_icon_without_waiting_for_the_fade_out(self):
+    def test_opening_the_window_does_not_bring_back_a_hidden_dock_icon(self):
         native = (ROOT / 'packaging' / 'RelayNativeApp.m').read_text()
-        self.assertIn('applyActivationPolicyIgnoringWindow:closing', native)
-        self.assertIn('self.window != closing', native)
+        show = native.split('- (void)showMainWindow {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('[self applyActivationPolicy];', show)
+        self.assertNotIn('NSApplicationActivationPolicyRegular', show)
+        self.assertNotIn('windowShown', native)
+        main = native.split('int main(', 1)[1]
+        self.assertNotIn('!opensWindow &&', main)  # also when the window opens at start
 
 
 if __name__ == '__main__':
