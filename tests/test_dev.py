@@ -48,7 +48,7 @@ class DevTests(unittest.TestCase):
                     headers={'Content-Type':'application/json','X-Relay-Token':token or ''})
                 with urllib.request.urlopen(req, timeout=1) as response:
                     return json.load(response)
-            def wait_until(predicate, seconds=12):
+            def wait_until(predicate, seconds=45):
                 deadline = time.monotonic()+seconds
                 while time.monotonic() < deadline:
                     try:

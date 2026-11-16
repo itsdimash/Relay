@@ -7,6 +7,16 @@ import threading
 import time
 import webbrowser
 from http.server import ThreadingHTTPServer
+import socketserver
+
+
+class LocalServer(ThreadingHTTPServer):
+    """The engine's server. HTTPServer.server_bind asks the network for the host's full name (a reverse lookup of 127.0.0.1),
+    which can take many seconds on a Mac with slow or no DNS, and Relay never uses the name. It starts without asking."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def dev_metadata(app):
@@ -74,7 +84,7 @@ def main(app):
     try:
         app.load_runs()
         app.enforce_retention()
-        server = ThreadingHTTPServer(('127.0.0.1', args.port), app.Handler)
+        server = LocalServer(('127.0.0.1', args.port), app.Handler)
         # Closing the server must never wait for a request thread; a stuck connection once kept the engine alive after quit.
         app.desktop.bind(f'http://127.0.0.1:{server.server_port}')
         server.daemon_threads = True

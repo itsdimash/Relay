@@ -72,7 +72,7 @@ class ExportTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
-    def wait_for(self, predicate, seconds=15):
+    def wait_for(self, predicate, seconds=45, log=None):
         end=time.monotonic()+seconds
         while time.monotonic()<end:
             try:
@@ -80,7 +80,9 @@ class LifecycleTests(unittest.TestCase):
                 if value:return value
             except (OSError,ValueError,KeyError):pass
             time.sleep(.05)
-        self.fail('Lifecycle check timed out')
+        try:tail=Path(log).read_text()[-2500:] if log else ''
+        except OSError:tail=''
+        self.fail('Lifecycle check timed out. Server log: '+(tail or '(empty)'))
 
     def alive(self, pid):
         result=subprocess.run(['ps','-o','stat=','-p',str(pid)],capture_output=True,text=True)
@@ -117,7 +119,7 @@ print(json.dumps({'type':'result','structured_output':{'status':'observed','summ
                     with urllib.request.urlopen(req,timeout=2) as response:return json.load(response)
                 process=start();pids=[]
                 try:
-                    token=self.wait_for(lambda:request('/api/state'))['token']
+                    token=self.wait_for(lambda:request('/api/state'),log=base/'server.log')['token']
                     ident=request('/api/run',{'task':'Fixture','project':str(project),'rounds':1,'minutes':1})['id']
                     def state():return next(r for r in request('/api/state?selected='+ident)['runs'] if r['id']==ident)
                     plan=self.wait_for(lambda:(v if (v:=state())['status']=='awaiting_approval' else None))
